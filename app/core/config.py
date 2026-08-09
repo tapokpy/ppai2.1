@@ -33,6 +33,10 @@ class Settings(BaseSettings):
 
     # Security
     SECRET_KEY: str = "change-me-in-production"
+    INTERNAL_API_TOKEN: str = "change-me-internal-token"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRES_HOURS: int = 8
+    OTT_EXPIRES_SECONDS: int = 300
 
     @property
     def admin_ids(self) -> list[int]:

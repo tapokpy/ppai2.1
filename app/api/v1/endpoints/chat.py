@@ -1,0 +1,40 @@
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from app.core.observability import get_tracer
+from app.core.router import CascadeRouter
+from app.core.security import TokenError, decode_access_token
+from app.schemas.chat import ChatChoice, ChatMessage, ChatRequest, ChatResponse
+
+router = APIRouter(prefix="/chat", tags=["chat"])
+security = HTTPBearer()
+
+
+def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> int:
+    try:
+        return decode_access_token(credentials.credentials)
+    except TokenError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+
+
+def get_cascade_router(request: Request) -> CascadeRouter:
+    return request.app.state.cascade_router
+
+
+@router.post("", response_model=ChatResponse)
+async def chat(
+    payload: ChatRequest,
+    user_id: int = Depends(get_current_user_id),
+    cascade_router: CascadeRouter = Depends(get_cascade_router),
+) -> ChatResponse:
+    trace = get_tracer().trace_chat(user_id=user_id, prompt=payload.message)
+
+    result = await cascade_router.process_query(user_id=user_id, prompt=payload.message)
+
+    trace.update(output=result["text"], metadata={"source": result["source"]})
+
+    return ChatResponse(
+        choices=[ChatChoice(index=0, message=ChatMessage(role="assistant", content=result["text"]))],
+        source=result["source"],
+        context_used=result["context_used"],
+    )

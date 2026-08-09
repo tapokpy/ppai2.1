@@ -25,8 +25,12 @@ async def test_lifespan_disposes_engine_on_shutdown():
     fake_engine = MagicMock()
     fake_engine.dispose = AsyncMock()
 
-    with patch("app.main.engine", fake_engine):
+    with (
+        patch("app.main.engine", fake_engine),
+        patch("app.main.build_cascade_router", return_value=MagicMock()) as build_mock,
+    ):
         async with app.router.lifespan_context(app):
             pass
 
+    build_mock.assert_called_once()
     fake_engine.dispose.assert_awaited_once()
