@@ -4,12 +4,12 @@
 
 ## Статус
 
-Проект в разработке, сессия 1 из 4 (см. план в issue/переписке):
+Проект в разработке, сессия 2 из 4 (см. план в issue/переписке):
 
 - [x] Шаг 1 — каркас проекта: `app/core/config.py`, `app/core/database.py`, `app/main.py` (`/health`), Alembic, docker-compose (Postgres/Redis/Ollama)
 - [x] Шаг 2 — Cascade Router: `app/services/local_llm.py`, `app/services/cloud_llm.py`, `app/services/rag_engine.py`, `app/core/router.py`
-- [ ] Шаг 3 — Telegram-бот (Aiogram)
-- [ ] Шаг 4 — FSM-калькуляторы + Business Rules Engine
+- [x] Шаг 3 — Telegram-бот (Aiogram): `app/bot/main.py`, auth middleware, меню, чат через `CascadeRouter`, админ-команды
+- [x] Шаг 4 — FSM-калькуляторы (модули, мощность/кабели) + Business Rules Engine
 - [ ] Шаг 5 — генерация DOCX/XLSX
 - [ ] Шаг 6 — RAG Knowledge Auto-Harvesting
 - [ ] Шаг 7 — напоминания (NLU + APScheduler)

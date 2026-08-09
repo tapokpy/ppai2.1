@@ -8,8 +8,7 @@ from sqlalchemy import pool
 from app.core.config import settings
 from app.core.database import Base
 
-# import models here so Base.metadata is populated for autogenerate
-# from app.models.sqlalchemy import user, chat, message, project  # noqa
+from app.models.sqlalchemy import activity_log, business_rule, message, user  # noqa: E402,F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.POSTGRES_DSN)
