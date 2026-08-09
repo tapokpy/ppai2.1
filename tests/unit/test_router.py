@@ -42,6 +42,13 @@ def make_router(
     return router, rag_engine, local_llm, cloud_llm, redis_client
 
 
+def test_exposes_rag_engine_and_local_llm_for_kb_harvesting():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router()
+
+    assert router.rag_engine is rag_engine
+    assert router.local_llm is local_llm
+
+
 @pytest.mark.asyncio
 async def test_uses_rag_when_context_found_and_local_can_answer():
     router, rag_engine, local_llm, cloud_llm, redis_client = make_router(

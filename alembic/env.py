@@ -8,7 +8,7 @@ from sqlalchemy import pool
 from app.core.config import settings
 from app.core.database import Base
 
-from app.models.sqlalchemy import activity_log, business_rule, message, user  # noqa: E402,F401
+from app.models.sqlalchemy import activity_log, business_rule, message, reminder, user  # noqa: E402,F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.POSTGRES_DSN)

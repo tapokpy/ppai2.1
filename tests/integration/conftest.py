@@ -27,7 +27,7 @@ requires_redis = pytest.mark.skipif(
     reason="Redis is not reachable (run `docker compose up -d redis`)",
 )
 
-_TABLES_TO_RESET = "messages, activity_logs, business_rules, users"
+_TABLES_TO_RESET = "messages, activity_logs, business_rules, reminders, users"
 
 
 @pytest.fixture(autouse=True)

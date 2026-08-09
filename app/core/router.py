@@ -28,6 +28,14 @@ class CascadeRouter:
         self._redis = redis_client
         self._cloud_daily_limit = cloud_daily_limit
 
+    @property
+    def rag_engine(self) -> RAGEngine:
+        return self._rag
+
+    @property
+    def local_llm(self) -> LocalLLMClient:
+        return self._local
+
     async def process_query(self, user_id: int, prompt: str, use_cloud_override: bool = False) -> dict:
         if use_cloud_override:
             return await self._call_cloud(user_id, prompt, context=None)

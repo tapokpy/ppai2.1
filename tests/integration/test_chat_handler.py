@@ -32,7 +32,7 @@ async def test_handle_text_saves_history_and_replies(clean_db):
     message = SimpleNamespace(
         text="Привет",
         message_id=7,
-        chat=SimpleNamespace(id=999),
+        chat=SimpleNamespace(id=999, type="private"),
         answer=AsyncMock(),
     )
 
@@ -51,3 +51,35 @@ async def test_handle_text_saves_history_and_replies(clean_db):
     assert messages[0].prompt == "Привет"
     assert len(logs) == 1
     assert logs[0].chat_id == 999
+
+
+@pytest.mark.asyncio
+async def test_handle_text_skips_activity_log_for_group_chat(clean_db):
+    async with async_session_maker() as session:
+        user = User(telegram_id=556, username="engineer2")
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+    cascade_router = AsyncMock()
+    cascade_router.process_query.return_value = {
+        "text": "Ответ бота",
+        "source": "local",
+        "context_used": False,
+    }
+
+    message = SimpleNamespace(
+        text="@bot Привет",
+        message_id=8,
+        chat=SimpleNamespace(id=1000, type="supergroup"),
+        answer=AsyncMock(),
+    )
+
+    await handle_text(message, cascade_router, user)
+
+    async with async_session_maker() as session:
+        messages = (await session.execute(select(MessageModel))).scalars().all()
+        logs = (await session.execute(select(ActivityLog))).scalars().all()
+
+    assert len(messages) == 1
+    assert logs == []
