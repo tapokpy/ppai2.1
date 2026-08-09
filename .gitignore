@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.pytest_cache/
+.coverage
+htmlcov/
+data/chroma_db/*
+!data/chroma_db/.gitkeep
+data/logs/*
+!data/logs/.gitkeep
+data/temp/*
+!data/temp/.gitkeep
+*.egg-info/
