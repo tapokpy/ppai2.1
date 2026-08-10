@@ -39,6 +39,7 @@ async def _process_and_reply(
                 response=result["text"],
                 source=result["source"],
                 context_used=result["context_used"],
+                rag_debug=result.get("rag_debug"),
             )
         )
         # Group messages are already logged for every message (mentioned or not)
@@ -172,6 +173,7 @@ async def ask_cloud_callback(callback: CallbackQuery, db_user: User, cascade_rou
                 response=result["text"],
                 source=result["source"],
                 context_used=result["context_used"],
+                rag_debug=result.get("rag_debug"),
             )
         )
         await session.commit()
