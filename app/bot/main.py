@@ -11,7 +11,7 @@ from app.bot.handlers.group_chat import send_reminder_message
 from app.bot.middlewares.auth import AuthMiddleware
 from app.bot.middlewares.group_activity import GroupActivityMiddleware
 from app.core.config import settings
-from app.core.dependencies import build_cascade_router
+from app.core.dependencies import build_cascade_router, build_transcriber
 from app.core.scheduler import ReminderScheduler
 
 
@@ -32,6 +32,7 @@ async def main() -> None:
     bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = build_dispatcher()
     cascade_router = build_cascade_router()
+    transcriber = build_transcriber()
 
     scheduler = ReminderScheduler(send_reminder_callback=partial(send_reminder_message, bot))
     scheduler.start()
@@ -42,6 +43,7 @@ async def main() -> None:
         cascade_router=cascade_router,
         local_llm=cascade_router.local_llm,
         scheduler=scheduler,
+        transcriber=transcriber,
     )
 
 

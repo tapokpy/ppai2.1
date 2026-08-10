@@ -6,6 +6,16 @@ from app.services.cloud_llm import CloudLLMClient
 from app.services.embeddings import default_embedding_function
 from app.services.local_llm import LocalLLMClient
 from app.services.rag_engine import RAGEngine
+from app.services.stt import Transcriber
+
+
+def build_transcriber() -> Transcriber:
+    return Transcriber(
+        model_size=settings.WHISPER_MODEL_SIZE,
+        device=settings.WHISPER_DEVICE,
+        compute_type=settings.WHISPER_COMPUTE_TYPE,
+        language=settings.WHISPER_LANGUAGE,
+    )
 
 
 def build_cascade_router() -> CascadeRouter:
