@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.core.database import async_session_maker
 from app.core.observability import get_tracer
 from app.core.router import CascadeRouter
 from app.core.security import TokenError, decode_access_token
+from app.models.sqlalchemy.message import Message as MessageModel
 from app.schemas.chat import ChatChoice, ChatMessage, ChatRequest, ChatResponse
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -32,6 +34,19 @@ async def chat(
     result = await cascade_router.process_query(user_id=user_id, prompt=payload.message)
 
     trace.update(output=result["text"], metadata={"source": result["source"]})
+
+    async with async_session_maker() as session:
+        session.add(
+            MessageModel(
+                user_id=user_id,
+                telegram_message_id=None,
+                prompt=payload.message,
+                response=result["text"],
+                source=result["source"],
+                context_used=result["context_used"],
+            )
+        )
+        await session.commit()
 
     return ChatResponse(
         choices=[ChatChoice(index=0, message=ChatMessage(role="assistant", content=result["text"]))],
