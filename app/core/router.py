@@ -1,8 +1,9 @@
 from datetime import date
 
+from loguru import logger
 from redis.asyncio import Redis
 
-from app.services.cloud_llm import CloudLLMClient
+from app.services.cloud_llm import CloudLLMClient, CloudUnavailableError
 from app.services.local_llm import LocalLLMClient
 from app.services.rag_engine import RAGEngine
 
@@ -10,6 +11,10 @@ CLOUD_RATE_LIMIT_KEY = "cloud_usage:{user_id}:{day}"
 RATE_LIMIT_MESSAGE = (
     "Достигнут дневной лимит обращений к облачному ИИ. "
     "Попробуйте завтра или обратитесь к администратору."
+)
+CLOUD_UNAVAILABLE_MESSAGE = (
+    "Расширенный облачный ответ сейчас недоступен. "
+    "Попробуйте переформулировать вопрос или обратитесь позже."
 )
 
 
@@ -70,7 +75,17 @@ class CascadeRouter:
                 "rag_debug": None,
             }
 
-        text = await self._cloud.generate(prompt, context=context)
+        try:
+            text = await self._cloud.generate(prompt, context=context)
+        except CloudUnavailableError as exc:
+            logger.warning(f"Cloud LLM unavailable for user {user_id}: {exc}")
+            return {
+                "text": CLOUD_UNAVAILABLE_MESSAGE,
+                "source": "cloud_unavailable",
+                "context_used": False,
+                "rag_debug": rag_debug,
+            }
+
         return {
             "text": text,
             "source": "cloud",

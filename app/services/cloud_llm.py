@@ -2,6 +2,16 @@ import anthropic
 import httpx
 
 
+class CloudUnavailableError(Exception):
+    """Raised when the Anthropic API can't be reached or rejects the request.
+
+    Covers a missing/invalid API key, network failures (including a VPN
+    proxy that's down), rate limits, and 5xx errors — anything callers
+    should treat as "cloud escalation isn't available right now" rather
+    than a bug.
+    """
+
+
 class CloudLLMClient:
     def __init__(self, api_key: str, model: str, proxy_url: str | None = None):
         """proxy_url routes Claude API traffic through an HTTP(S) proxy.
@@ -17,10 +27,13 @@ class CloudLLMClient:
     async def generate(self, prompt: str, context: str | None = None) -> str:
         user_content = f"Context:\n{context}\n\nQuestion:\n{prompt}" if context else prompt
 
-        response = await self._client.messages.create(
-            model=self._model,
-            max_tokens=2048,
-            messages=[{"role": "user", "content": user_content}],
-        )
+        try:
+            response = await self._client.messages.create(
+                model=self._model,
+                max_tokens=2048,
+                messages=[{"role": "user", "content": user_content}],
+            )
+        except anthropic.APIError as exc:
+            raise CloudUnavailableError(str(exc)) from exc
 
         return "".join(block.text for block in response.content if block.type == "text")

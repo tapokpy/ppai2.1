@@ -3,7 +3,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fakeredis.aioredis import FakeRedis
 
-from app.core.router import RATE_LIMIT_MESSAGE, CascadeRouter
+from app.core.router import CLOUD_UNAVAILABLE_MESSAGE, RATE_LIMIT_MESSAGE, CascadeRouter
+from app.services.cloud_llm import CloudUnavailableError
 from app.services.local_llm import LocalLLMClient
 
 
@@ -140,6 +141,23 @@ async def test_cloud_rate_limit_blocks_after_daily_limit():
         "rag_debug": None,
     }
     assert cloud_llm.generate.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_cloud_unavailable_returns_friendly_message_without_raising():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False, local_response="[NEED_CLOUD]"
+    )
+    cloud_llm.generate = AsyncMock(side_effect=CloudUnavailableError("missing API key"))
+
+    result = await router.process_query(user_id=1, prompt="сложный вопрос")
+
+    assert result == {
+        "text": CLOUD_UNAVAILABLE_MESSAGE,
+        "source": "cloud_unavailable",
+        "context_used": False,
+        "rag_debug": None,
+    }
 
 
 @pytest.mark.asyncio
