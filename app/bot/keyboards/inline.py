@@ -14,3 +14,14 @@ def response_actions(message_id: int) -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def calculator_export_actions(message_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📄 Коммерческое предложение (DOCX)", callback_data=f"export_docx:{message_id}"),
+                InlineKeyboardButton(text="📊 Смета (Excel)", callback_data=f"export_xlsx:{message_id}"),
+            ],
+        ]
+    )

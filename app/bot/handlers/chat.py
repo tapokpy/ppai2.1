@@ -103,13 +103,21 @@ async def export_docx_callback(callback: CallbackQuery, db_user: User) -> None:
         await callback.answer("Сообщение не найдено", show_alert=True)
         return
 
-    file_path = generate_docx(
-        {
+    structured = stored_message.structured_data
+    if structured:
+        proposal_data = {
+            "title": structured.get("title", "Коммерческое предложение"),
+            "items": structured.get("items", []),
+            "notes": stored_message.response,
+        }
+    else:
+        proposal_data = {
             "title": "Коммерческое предложение",
             "items": [{"name": stored_message.prompt, "quantity": 1, "unit": "шт", "price": ""}],
             "notes": stored_message.response,
         }
-    )
+
+    file_path = generate_docx(proposal_data)
 
     await callback.message.answer_document(FSInputFile(file_path))
     await callback.answer()
@@ -124,12 +132,19 @@ async def export_xlsx_callback(callback: CallbackQuery, db_user: User) -> None:
         await callback.answer("Сообщение не найдено", show_alert=True)
         return
 
-    file_path = generate_xlsx(
-        {
+    structured = stored_message.structured_data
+    if structured:
+        estimate_data = {
+            "title": structured.get("title", "Смета"),
+            "rows": structured.get("rows", []),
+        }
+    else:
+        estimate_data = {
             "title": "Смета",
             "rows": [{"name": stored_message.prompt, "quantity": 1, "unit_price": 0}],
         }
-    )
+
+    file_path = generate_xlsx(estimate_data)
 
     await callback.message.answer_document(FSInputFile(file_path))
     await callback.answer()

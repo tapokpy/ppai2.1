@@ -2,6 +2,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from docx import Document
+from openpyxl import load_workbook
 from sqlalchemy import select
 
 from app.bot.handlers.chat import (
@@ -39,6 +41,33 @@ async def _seed_user_and_message(telegram_message_id: int = 100) -> tuple[User, 
     return user, message
 
 
+async def _seed_user_and_calculator_message(telegram_message_id: int = 200) -> User:
+    async with async_session_maker() as session:
+        user = User(telegram_id=778, username="engineer2")
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+        message = MessageModel(
+            user_id=user.id,
+            telegram_message_id=telegram_message_id,
+            prompt="Расчёт модулей: 3x2 м, шаг 2.5 мм",
+            response="Модулей: 24",
+            source="calculator",
+            context_used=False,
+            structured_data={
+                "kind": "module_calculation",
+                "title": "Коммерческое предложение: модульный экран",
+                "items": [{"name": "Модуль дисплея, шаг пикселя 2.5 мм", "quantity": 24, "unit": "шт", "price": ""}],
+                "rows": [{"name": "Модуль дисплея, шаг пикселя 2.5 мм", "quantity": 24, "unit_price": 0}],
+            },
+        )
+        session.add(message)
+        await session.commit()
+
+    return user
+
+
 @pytest.mark.asyncio
 async def test_export_docx_callback_sends_document(clean_db):
     user, _ = await _seed_user_and_message()
@@ -66,6 +95,45 @@ async def test_export_xlsx_callback_sends_document(clean_db):
     await export_xlsx_callback(callback, user)
 
     callback.message.answer_document.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_export_docx_callback_uses_structured_calculator_data(clean_db):
+    user = await _seed_user_and_calculator_message()
+    callback = SimpleNamespace(
+        data="export_docx:200",
+        message=SimpleNamespace(answer_document=AsyncMock()),
+        answer=AsyncMock(),
+    )
+
+    await export_docx_callback(callback, user)
+
+    sent_file = callback.message.answer_document.call_args.args[0]
+    document = Document(sent_file.path)
+    table = document.tables[0]
+
+    assert document.paragraphs[0].text == "Коммерческое предложение: модульный экран"
+    assert table.rows[1].cells[0].text == "Модуль дисплея, шаг пикселя 2.5 мм"
+    assert table.rows[1].cells[1].text == "24"
+
+
+@pytest.mark.asyncio
+async def test_export_xlsx_callback_uses_structured_calculator_data(clean_db):
+    user = await _seed_user_and_calculator_message()
+    callback = SimpleNamespace(
+        data="export_xlsx:200",
+        message=SimpleNamespace(answer_document=AsyncMock()),
+        answer=AsyncMock(),
+    )
+
+    await export_xlsx_callback(callback, user)
+
+    sent_file = callback.message.answer_document.call_args.args[0]
+    workbook = load_workbook(sent_file.path)
+    sheet = workbook.active
+
+    assert sheet.cell(row=4, column=1).value == "Модуль дисплея, шаг пикселя 2.5 мм"
+    assert sheet.cell(row=4, column=2).value == 24
 
 
 @pytest.mark.asyncio
