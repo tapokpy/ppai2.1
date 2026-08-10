@@ -1,9 +1,17 @@
 import anthropic
+import httpx
 
 
 class CloudLLMClient:
-    def __init__(self, api_key: str, model: str):
-        self._client = anthropic.AsyncAnthropic(api_key=api_key)
+    def __init__(self, api_key: str, model: str, proxy_url: str | None = None):
+        """proxy_url routes Claude API traffic through an HTTP(S) proxy.
+
+        Used in production to send Anthropic requests through a VPN
+        sidecar (e.g. Gluetun) without affecting any other outbound
+        traffic. Leave unset for direct connections (local development).
+        """
+        http_client = httpx.AsyncClient(proxy=proxy_url) if proxy_url else None
+        self._client = anthropic.AsyncAnthropic(api_key=api_key, http_client=http_client)
         self._model = model
 
     async def generate(self, prompt: str, context: str | None = None) -> str:

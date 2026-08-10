@@ -25,7 +25,11 @@ def build_cascade_router() -> CascadeRouter:
         embedding_function=default_embedding_function(settings.EMBEDDING_MODEL_NAME),
     )
     local_llm = LocalLLMClient(base_url=settings.OLLAMA_URL, model=settings.OLLAMA_MODEL)
-    cloud_llm = CloudLLMClient(api_key=settings.ANTHROPIC_API_KEY, model=settings.CLOUD_MODEL_NAME)
+    cloud_llm = CloudLLMClient(
+        api_key=settings.ANTHROPIC_API_KEY,
+        model=settings.CLOUD_MODEL_NAME,
+        proxy_url=settings.ANTHROPIC_PROXY_URL or None,
+    )
     redis_client = Redis.from_url(settings.REDIS_URL)
 
     return CascadeRouter(

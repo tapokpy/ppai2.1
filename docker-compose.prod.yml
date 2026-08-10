@@ -1,0 +1,162 @@
+# Production stack for ppai.
+#
+# VPN split-tunneling: only outbound calls to the Anthropic (Claude) API are
+# routed through the `gluetun` container's HTTP proxy (WireGuard/Mullvad).
+# Telegram, Postgres, Redis and Ollama traffic all stay on the plain Docker
+# bridge network and never touch the VPN — this avoids Telegram flagging the
+# bot for using a datacenter/VPN exit IP, and keeps local DB/cache calls
+# fast. See the deployment notes for the full rationale and a request-by-
+# request walkthrough of the Claude path.
+#
+# Usage:
+#   cp .env.example .env            # fill in secrets
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Required additional variables (put them in .env, do not commit them):
+#   POSTGRES_PASSWORD
+#   MULLVAD_WIREGUARD_PRIVATE_KEY, MULLVAD_WIREGUARD_ADDRESSES
+#   (from your Mullvad account's WireGuard config)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ppai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-ppai}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ppai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  # VPN sidecar. Exposes an HTTP proxy on :8888 *inside* the Docker network
+  # only (no host port published) that tunnels through WireGuard/Mullvad.
+  # Nothing is attached to it via network_mode — api/bot reach it as a
+  # regular proxy target (see ANTHROPIC_PROXY_URL below), so if the tunnel
+  # drops, only Claude calls fail; Telegram/DB/Redis keep working.
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      VPN_SERVICE_PROVIDER: mullvad
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${MULLVAD_WIREGUARD_PRIVATE_KEY:?required}
+      WIREGUARD_ADDRESSES: ${MULLVAD_WIREGUARD_ADDRESSES:?required}
+      SERVER_COUNTRIES: ${MULLVAD_SERVER_COUNTRIES:-Sweden}
+      HTTPPROXY: "on"
+      HTTPPROXY_LISTENING_ADDRESS: ":8888"
+      BLOCK_IPV6: "on"
+      DOT: "off"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "--timeout=3", "http://localhost:8888"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    env_file: .env
+    environment:
+      # Only Claude calls go through gluetun's proxy; every other outbound
+      # call this service makes (Postgres, Redis, Ollama) bypasses it.
+      ANTHROPIC_PROXY_URL: http://gluetun:8888
+      POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-ppai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ppai}
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_URL: http://ollama:11434
+      CHROMA_PERSIST_DIR: /app/data/chroma_db
+    ports:
+      - "8000:8000"
+    volumes:
+      - app_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      gluetun:
+        condition: service_healthy
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    env_file: .env
+    environment:
+      ANTHROPIC_PROXY_URL: http://gluetun:8888
+      POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-ppai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ppai}
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_URL: http://ollama:11434
+      CHROMA_PERSIST_DIR: /app/data/chroma_db
+    volumes:
+      - app_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      gluetun:
+        condition: service_healthy
+    restart: unless-stopped
+    # Telegram Bot API calls are NOT proxied through gluetun — the bot talks
+    # out directly on the plain bridge network so Telegram sees the real
+    # server IP, not Mullvad's (avoids the datacenter/VPN-IP ban risk).
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    environment:
+      WEBUI_AUTH: "false"
+      OPENAI_API_BASE_URL: http://api:8000/api/v1
+    volumes:
+      - open_webui_data:/app/backend/data
+    ports:
+      - "3000:8080"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    command: -H unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    ports:
+      - "9443:9443"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:
+  app_data:
+  open_webui_data:
+  portainer_data:

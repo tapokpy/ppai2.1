@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+htmlcov
+tests
+data/chroma_db/*
+data/logs/*
+data/temp/*
+.env
+*.md
