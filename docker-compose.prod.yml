@@ -1,7 +1,10 @@
 # Production stack for ppai.
 #
 # VPN split-tunneling: only outbound calls to the Anthropic (Claude) API are
-# routed through the `gluetun` container's HTTP proxy (WireGuard/Mullvad).
+# routed through the `gluetun` container's HTTP proxy, which tunnels through
+# a self-hosted WireGuard server (e.g. deployed via AmneziaVPN, using its
+# plain "WireGuard" protocol — NOT the obfuscated "AmneziaWG" variant, which
+# Gluetun's standard WireGuard implementation cannot speak).
 # Telegram, Postgres, Redis and Ollama traffic all stay on the plain Docker
 # bridge network and never touch the VPN — this avoids Telegram flagging the
 # bot for using a datacenter/VPN exit IP, and keeps local DB/cache calls
@@ -12,10 +15,16 @@
 #   cp .env.example .env            # fill in secrets
 #   docker compose -f docker-compose.prod.yml up -d --build
 #
-# Required additional variables (put them in .env, do not commit them):
+# Required additional variables (put them in .env, do not commit them).
+# Get the WireGuard values from the config AmneziaVPN generated for this
+# device (Amnezia app -> your server -> "..." -> share/export config):
 #   POSTGRES_PASSWORD
-#   MULLVAD_WIREGUARD_PRIVATE_KEY, MULLVAD_WIREGUARD_ADDRESSES
-#   (from your Mullvad account's WireGuard config)
+#   VPN_ENDPOINT_IP            = your server's IP (the [Peer] Endpoint host)
+#   VPN_ENDPOINT_PORT          = the [Peer] Endpoint port (default 51820)
+#   VPN_SERVER_PUBLIC_KEY      = [Peer] PublicKey in the exported config
+#   VPN_CLIENT_PRIVATE_KEY     = [Interface] PrivateKey in the exported config
+#   VPN_CLIENT_ADDRESS         = [Interface] Address in the exported config (e.g. 10.8.1.2/32)
+#   VPN_PRESHARED_KEY          = [Peer] PresharedKey, only if Amnezia set one (optional)
 
 services:
   postgres:
@@ -51,9 +60,9 @@ services:
     restart: unless-stopped
 
   # VPN sidecar. Exposes an HTTP proxy on :8888 *inside* the Docker network
-  # only (no host port published) that tunnels through WireGuard/Mullvad.
-  # Nothing is attached to it via network_mode — api/bot reach it as a
-  # regular proxy target (see ANTHROPIC_PROXY_URL below), so if the tunnel
+  # only (no host port published) that tunnels through your own WireGuard
+  # server. Nothing is attached to it via network_mode — api/bot reach it as
+  # a regular proxy target (see ANTHROPIC_PROXY_URL below), so if the tunnel
   # drops, only Claude calls fail; Telegram/DB/Redis keep working.
   gluetun:
     image: qmcgaw/gluetun:latest
@@ -62,11 +71,14 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     environment:
-      VPN_SERVICE_PROVIDER: mullvad
+      VPN_SERVICE_PROVIDER: custom
       VPN_TYPE: wireguard
-      WIREGUARD_PRIVATE_KEY: ${MULLVAD_WIREGUARD_PRIVATE_KEY:?required}
-      WIREGUARD_ADDRESSES: ${MULLVAD_WIREGUARD_ADDRESSES:?required}
-      SERVER_COUNTRIES: ${MULLVAD_SERVER_COUNTRIES:-Sweden}
+      WIREGUARD_ENDPOINT_IP: ${VPN_ENDPOINT_IP:?required}
+      WIREGUARD_ENDPOINT_PORT: ${VPN_ENDPOINT_PORT:-51820}
+      WIREGUARD_PUBLIC_KEY: ${VPN_SERVER_PUBLIC_KEY:?required}
+      WIREGUARD_PRIVATE_KEY: ${VPN_CLIENT_PRIVATE_KEY:?required}
+      WIREGUARD_ADDRESSES: ${VPN_CLIENT_ADDRESS:?required}
+      WIREGUARD_PRESHARED_KEY: ${VPN_PRESHARED_KEY:-}
       HTTPPROXY: "on"
       HTTPPROXY_LISTENING_ADDRESS: ":8888"
       BLOCK_IPV6: "on"
@@ -128,7 +140,7 @@ services:
     restart: unless-stopped
     # Telegram Bot API calls are NOT proxied through gluetun — the bot talks
     # out directly on the plain bridge network so Telegram sees the real
-    # server IP, not Mullvad's (avoids the datacenter/VPN-IP ban risk).
+    # server IP, not the VPN exit IP (avoids the datacenter/VPN-IP ban risk).
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
