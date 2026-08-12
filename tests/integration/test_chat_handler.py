@@ -44,7 +44,7 @@ async def test_handle_text_saves_history_and_replies(clean_db):
     cascade_router.process_query.assert_awaited_once_with(user_id=user.id, prompt="Привет")
     message.answer.assert_awaited_once()
     # Non-admins never see the debug/metrics footer, regardless of what the
-    # cascade router returned — just the plain answer.
+    # cascade router returned — just the plain answer, no keyboard.
     assert message.answer.call_args.args[0] == "Ответ бота"
     assert message.answer.call_args.kwargs.get("reply_markup") is None
 
