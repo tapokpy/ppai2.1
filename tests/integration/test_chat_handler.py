@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -37,11 +37,16 @@ async def test_handle_text_saves_history_and_replies(clean_db):
         answer=AsyncMock(),
     )
 
-    await handle_text(message, cascade_router, user)
+    with patch("app.bot.handlers.admin.settings") as settings_mock:
+        settings_mock.admin_ids = []
+        await handle_text(message, cascade_router, user)
 
     cascade_router.process_query.assert_awaited_once_with(user_id=user.id, prompt="Привет")
     message.answer.assert_awaited_once()
-    assert message.answer.call_args.args[0] == "⏱ 1.23с\n\nОтвет бота"
+    # Non-admins never see the debug/metrics footer, regardless of what the
+    # cascade router returned — just the plain answer.
+    assert message.answer.call_args.args[0] == "Ответ бота"
+    assert message.answer.call_args.kwargs.get("reply_markup") is None
 
     async with async_session_maker() as session:
         messages = (await session.execute(select(MessageModel))).scalars().all()
@@ -50,16 +55,50 @@ async def test_handle_text_saves_history_and_replies(clean_db):
     assert len(messages) == 1
     assert messages[0].source == "local"
     assert messages[0].prompt == "Привет"
-    # DB stores the raw answer text; the timing prefix is a display-only concern.
     assert messages[0].response == "Ответ бота"
     assert len(logs) == 1
     assert logs[0].chat_id == 999
 
 
 @pytest.mark.asyncio
-async def test_handle_text_replies_without_prefix_when_elapsed_seconds_missing(clean_db):
+async def test_handle_text_shows_full_metrics_footer_to_admin(clean_db):
     async with async_session_maker() as session:
-        user = User(telegram_id=559, username="engineer5")
+        user = User(telegram_id=560, username="admin_engineer")
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+    cascade_router = AsyncMock()
+    cascade_router.process_query.return_value = {
+        "text": "Сечение кабеля 4 кв.мм",
+        "source": "rag",
+        "context_used": True,
+        "elapsed_seconds": 0.8,
+        "confidence": "medium",
+        "rag_debug": {"max_score": 0.91, "retrieved": []},
+        "llm_usage": {"prompt_tokens": 120, "completion_tokens": 45},
+    }
+
+    message = SimpleNamespace(
+        text="какое сечение кабеля?",
+        message_id=14,
+        chat=SimpleNamespace(id=1004, type="private"),
+        answer=AsyncMock(),
+    )
+
+    with patch("app.bot.handlers.admin.settings") as settings_mock:
+        settings_mock.admin_ids = [560]
+        await handle_text(message, cascade_router, user)
+
+    reply = message.answer.call_args.args[0]
+    assert reply.startswith("🔧 ⏱ 0.8с · rag · score 0.91 · ⚠️ medium · 120+45 ток")
+    assert reply.endswith("\n\nСечение кабеля 4 кв.мм")
+
+
+@pytest.mark.asyncio
+async def test_handle_text_admin_metrics_omit_missing_optional_fields(clean_db):
+    async with async_session_maker() as session:
+        user = User(telegram_id=561, username="admin_engineer2")
         session.add(user)
         await session.commit()
         await session.refresh(user)
@@ -69,18 +108,21 @@ async def test_handle_text_replies_without_prefix_when_elapsed_seconds_missing(c
         "text": "Ответ бота",
         "source": "local",
         "context_used": False,
+        "elapsed_seconds": 1.1,
     }
 
     message = SimpleNamespace(
         text="Привет",
-        message_id=13,
-        chat=SimpleNamespace(id=1003, type="private"),
+        message_id=15,
+        chat=SimpleNamespace(id=1005, type="private"),
         answer=AsyncMock(),
     )
 
-    await handle_text(message, cascade_router, user)
+    with patch("app.bot.handlers.admin.settings") as settings_mock:
+        settings_mock.admin_ids = [561]
+        await handle_text(message, cascade_router, user)
 
-    assert message.answer.call_args.args[0] == "Ответ бота"
+    assert message.answer.call_args.args[0] == "🔧 ⏱ 1.1с · local\n\nОтвет бота"
 
 
 @pytest.mark.asyncio
@@ -105,7 +147,9 @@ async def test_handle_text_skips_activity_log_for_group_chat(clean_db):
         answer=AsyncMock(),
     )
 
-    await handle_text(message, cascade_router, user)
+    with patch("app.bot.handlers.admin.settings") as settings_mock:
+        settings_mock.admin_ids = []
+        await handle_text(message, cascade_router, user)
 
     async with async_session_maker() as session:
         messages = (await session.execute(select(MessageModel))).scalars().all()
@@ -144,7 +188,9 @@ async def test_handle_voice_transcribes_and_replies(clean_db):
         answer=AsyncMock(),
     )
 
-    await handle_voice(message, cascade_router, user, bot, transcriber)
+    with patch("app.bot.handlers.admin.settings") as settings_mock:
+        settings_mock.admin_ids = []
+        await handle_voice(message, cascade_router, user, bot, transcriber)
 
     bot.get_file.assert_awaited_once_with("abc")
     transcriber.transcribe.assert_awaited_once()
@@ -152,7 +198,7 @@ async def test_handle_voice_transcribes_and_replies(clean_db):
         user_id=user.id, prompt="Расскажи про шаг пикселя"
     )
     message.answer.assert_awaited_once()
-    assert message.answer.call_args.args[0] == "⏱ 3.5с\n\nОтвет бота"
+    assert message.answer.call_args.args[0] == "Ответ бота"
 
     async with async_session_maker() as session:
         messages = (await session.execute(select(MessageModel))).scalars().all()

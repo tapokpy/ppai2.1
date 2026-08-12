@@ -7,6 +7,7 @@ from aiogram.types import CallbackQuery, FSInputFile, Message
 from sqlalchemy import select
 
 from app.bot.filters import ShouldRespondFilter
+from app.bot.handlers.admin import is_admin
 from app.bot.keyboards.inline import response_actions
 from app.core.database import async_session_maker
 from app.core.router import CascadeRouter
@@ -20,12 +21,57 @@ router = Router(name="chat")
 
 VOICE_TEMP_DIR = Path("data/temp")
 
+_CONFIDENCE_EMOJI = {"high": "✅", "medium": "⚠️", "low": "❓"}
 
-def _with_timing(result: dict) -> str:
+
+def _basic_metrics_line(result: dict) -> str:
+    """Response time + confidence — shown to every user, before the answer."""
+    parts = []
+
     elapsed = result.get("elapsed_seconds")
-    if elapsed is None:
+    if elapsed is not None:
+        parts.append(f"⏱ {elapsed}с")
+
+    confidence = result.get("confidence")
+    if confidence:
+        emoji = _CONFIDENCE_EMOJI.get(confidence, "")
+        parts.append(f"{emoji} {confidence}".strip())
+
+    return " · ".join(parts)
+
+
+def _admin_debug_line(result: dict) -> str:
+    """Extra diagnostic detail (source, RAG score, token usage/estimated
+    cost) appended only for admins — everyone else just gets the timing/
+    confidence line above."""
+    parts = [str(result.get("source", "?"))]
+
+    rag_debug = result.get("rag_debug")
+    if rag_debug:
+        parts.append(f"score {rag_debug['max_score']:.2f}")
+
+    usage = result.get("llm_usage")
+    if usage and usage.get("prompt_tokens") is not None:
+        token_part = f"{usage['prompt_tokens']}+{usage['completion_tokens']} ток"
+        if usage.get("estimated_cost_usd"):
+            token_part += f" (~${usage['estimated_cost_usd']})"
+        parts.append(token_part)
+
+    return "🔧 " + " · ".join(parts)
+
+
+def _format_reply(result: dict, db_user: User) -> str:
+    lines = [line for line in [_basic_metrics_line(result)] if line]
+
+    if is_admin(db_user.telegram_id):
+        admin_line = _admin_debug_line(result)
+        if admin_line != "🔧 ":
+            lines.append(admin_line)
+
+    if not lines:
         return result["text"]
-    return f"⏱ {elapsed}с\n\n{result['text']}"
+
+    return "\n".join(lines) + f"\n\n{result['text']}"
 
 
 async def _process_and_reply(
@@ -62,7 +108,7 @@ async def _process_and_reply(
             )
         await session.commit()
 
-    await message.answer(_with_timing(result), reply_markup=response_actions(message.message_id))
+    await message.answer(_format_reply(result, db_user), reply_markup=response_actions(message.message_id))
 
 
 @router.message(F.text, ShouldRespondFilter())
@@ -186,7 +232,7 @@ async def ask_cloud_callback(callback: CallbackQuery, db_user: User, cascade_rou
         await session.commit()
 
     await callback.message.answer(
-        _with_timing(result), reply_markup=response_actions(callback.message.message_id)
+        _format_reply(result, db_user), reply_markup=response_actions(callback.message.message_id)
     )
     await callback.answer()
 

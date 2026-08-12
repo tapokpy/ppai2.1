@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from docx import Document
@@ -199,7 +199,9 @@ async def test_ask_cloud_callback_reprocesses_via_cloud(clean_db):
         answer=AsyncMock(),
     )
 
-    await ask_cloud_callback(callback, user, cascade_router)
+    with patch("app.bot.handlers.admin.settings") as settings_mock:
+        settings_mock.admin_ids = []
+        await ask_cloud_callback(callback, user, cascade_router)
 
     cascade_router.process_query.assert_awaited_once_with(
         user_id=user.id,
@@ -207,7 +209,9 @@ async def test_ask_cloud_callback_reprocesses_via_cloud(clean_db):
         use_cloud_override=True,
     )
     callback.message.answer.assert_awaited_once()
-    assert callback.message.answer.call_args.args[0] == "⏱ 4.1с\n\nОблачный ответ"
+    # Non-admin: no metrics footer, no export/ask-cloud/save-kb keyboard.
+    assert callback.message.answer.call_args.args[0] == "Облачный ответ"
+    assert callback.message.answer.call_args.kwargs.get("reply_markup") is None
 
     async with async_session_maker() as session:
         messages = (await session.execute(select(MessageModel))).scalars().all()

@@ -34,7 +34,15 @@ def build_cascade_router() -> CascadeRouter:
         score_threshold=settings.RAG_SCORE_THRESHOLD,
         embedding_function=default_embedding_function(settings.EMBEDDING_MODEL_NAME),
     )
-    local_llm = LocalLLMClient(base_url=settings.OLLAMA_URL, model=settings.OLLAMA_MODEL)
+    local_llm = LocalLLMClient(
+        base_url=settings.OLLAMA_URL,
+        model=settings.OLLAMA_MODEL,
+        temperature=settings.OLLAMA_TEMPERATURE,
+        top_p=settings.OLLAMA_TOP_P,
+        top_k=settings.OLLAMA_TOP_K,
+        repeat_penalty=settings.OLLAMA_REPEAT_PENALTY,
+        num_predict=settings.OLLAMA_NUM_PREDICT,
+    )
     cloud_llm = CloudLLMClient(
         api_key=settings.ANTHROPIC_API_KEY,
         model=settings.CLOUD_MODEL_NAME,

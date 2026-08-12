@@ -1,6 +1,13 @@
 import anthropic
 import httpx
 
+# Approximate USD-per-token pricing for the default cloud model
+# (claude-3-5-sonnet), used only for the admin-only debug footer in
+# Telegram — not billing-accurate, just a rough order-of-magnitude
+# indicator. Update if CLOUD_MODEL_NAME moves to a different pricing tier.
+_PRICE_PER_INPUT_TOKEN_USD = 3.0 / 1_000_000
+_PRICE_PER_OUTPUT_TOKEN_USD = 15.0 / 1_000_000
+
 
 class CloudUnavailableError(Exception):
     """Raised when the Anthropic API can't be reached or rejects the request.
@@ -25,6 +32,13 @@ class CloudLLMClient:
         self._model = model
 
     async def generate(self, prompt: str, context: str | None = None) -> str:
+        text, _usage = await self.generate_with_usage(prompt, context)
+        return text
+
+    async def generate_with_usage(self, prompt: str, context: str | None = None) -> tuple[str, dict]:
+        """Same as generate(), but also returns token-usage + an approximate
+        cost estimate (for the admin-only debug footer in Telegram) as
+        {"prompt_tokens": int, "completion_tokens": int, "estimated_cost_usd": float}."""
         user_content = f"Context:\n{context}\n\nQuestion:\n{prompt}" if context else prompt
 
         try:
@@ -36,4 +50,14 @@ class CloudLLMClient:
         except anthropic.APIError as exc:
             raise CloudUnavailableError(str(exc)) from exc
 
-        return "".join(block.text for block in response.content if block.type == "text")
+        text = "".join(block.text for block in response.content if block.type == "text")
+        usage = {
+            "prompt_tokens": response.usage.input_tokens,
+            "completion_tokens": response.usage.output_tokens,
+            "estimated_cost_usd": round(
+                response.usage.input_tokens * _PRICE_PER_INPUT_TOKEN_USD
+                + response.usage.output_tokens * _PRICE_PER_OUTPUT_TOKEN_USD,
+                4,
+            ),
+        }
+        return text, usage

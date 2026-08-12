@@ -1,12 +1,16 @@
+import re
 import time
 from datetime import date
 
 from loguru import logger
 from redis.asyncio import Redis
 
+from app.core.prompt_manager import CONFIDENCE_INSTRUCTION, detect_prompt_type, get_system_prompt
 from app.services.cloud_llm import CloudLLMClient, CloudUnavailableError
 from app.services.local_llm import LocalLLMClient
 from app.services.rag_engine import RAGEngine
+
+CONFIDENCE_PATTERN = re.compile(r"\[CONFIDENCE:\s*(high|medium|low)\]", re.IGNORECASE)
 
 CLOUD_RATE_LIMIT_KEY = "cloud_usage:{user_id}:{day}"
 RATE_LIMIT_MESSAGE = (
@@ -52,6 +56,8 @@ class CascadeRouter:
         if use_cloud_override:
             return await self._call_cloud(user_id, prompt, context=None, rag_debug=None)
 
+        base_system_prompt = get_system_prompt(detect_prompt_type(prompt)) + CONFIDENCE_INSTRUCTION
+
         rag_result = self._rag.query(prompt)
         context = None
         rag_debug = None
@@ -59,17 +65,48 @@ class CascadeRouter:
         if rag_result["found"]:
             context = "\n\n".join(rag_result["documents"])
             rag_debug = self._build_rag_debug(rag_result)
-            text = await self._local.generate(
-                prompt, system_prompt=f"Используй следующий контекст для ответа:\n{context}"
+            text, llm_usage = await self._local.generate_with_usage(
+                prompt, system_prompt=f"{base_system_prompt}\n\nКонтекст:\n{context}"
             )
             if text.strip() and not self._local.needs_cloud(text):
-                return {"text": text, "source": "rag", "context_used": True, "rag_debug": rag_debug}
+                clean_text, confidence = self._extract_confidence(text)
+                if confidence != "low":
+                    return {
+                        "text": clean_text,
+                        "source": "rag",
+                        "context_used": True,
+                        "rag_debug": rag_debug,
+                        "confidence": confidence,
+                        "llm_usage": llm_usage,
+                    }
         else:
-            text = await self._local.generate(prompt)
+            text, llm_usage = await self._local.generate_with_usage(prompt, system_prompt=base_system_prompt)
             if text.strip() and not self._local.needs_cloud(text):
-                return {"text": text, "source": "local", "context_used": False, "rag_debug": None}
+                clean_text, confidence = self._extract_confidence(text)
+                if confidence != "low":
+                    return {
+                        "text": clean_text,
+                        "source": "local",
+                        "context_used": False,
+                        "rag_debug": None,
+                        "confidence": confidence,
+                        "llm_usage": llm_usage,
+                    }
 
         return await self._call_cloud(user_id, prompt, context=context, rag_debug=rag_debug)
+
+    @staticmethod
+    def _extract_confidence(text: str) -> tuple[str, str | None]:
+        """Strips the trailing [CONFIDENCE: x] marker the model was asked to
+        append and returns (clean_text, confidence_level). confidence is None
+        if the model didn't include the marker at all (treated as unknown,
+        not escalated) rather than assuming the worst."""
+        match = CONFIDENCE_PATTERN.search(text)
+        if not match:
+            return text.strip(), None
+
+        clean_text = CONFIDENCE_PATTERN.sub("", text).strip()
+        return clean_text, match.group(1).lower()
 
     async def _call_cloud(
         self, user_id: int, prompt: str, context: str | None, rag_debug: dict | None
@@ -80,10 +117,12 @@ class CascadeRouter:
                 "source": "rate_limited",
                 "context_used": False,
                 "rag_debug": None,
+                "confidence": None,
+                "llm_usage": None,
             }
 
         try:
-            text = await self._cloud.generate(prompt, context=context)
+            text, llm_usage = await self._cloud.generate_with_usage(prompt, context=context)
         except CloudUnavailableError as exc:
             logger.warning(f"Cloud LLM unavailable for user {user_id}: {exc}")
             return {
@@ -91,6 +130,8 @@ class CascadeRouter:
                 "source": "cloud_unavailable",
                 "context_used": False,
                 "rag_debug": rag_debug,
+                "confidence": None,
+                "llm_usage": None,
             }
 
         return {
@@ -98,6 +139,11 @@ class CascadeRouter:
             "source": "cloud",
             "context_used": context is not None,
             "rag_debug": rag_debug,
+            # Claude isn't asked for a self-reported confidence marker (that
+            # instruction is only added to the local model's system prompt) —
+            # it's already the trusted fallback tier of the cascade.
+            "confidence": None,
+            "llm_usage": llm_usage,
         }
 
     @staticmethod

@@ -42,6 +42,24 @@ async def test_generate_includes_context_when_provided():
 
 
 @pytest.mark.asyncio
+async def test_generate_with_usage_returns_token_counts_and_estimated_cost():
+    client = CloudLLMClient(api_key="test-key", model="claude-3-5-sonnet-20241022")
+    response = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="Ответ")],
+        usage=SimpleNamespace(input_tokens=1000, output_tokens=1000),
+    )
+    client._client.messages.create = AsyncMock(return_value=response)
+
+    text, usage = await client.generate_with_usage("Вопрос")
+
+    assert text == "Ответ"
+    assert usage["prompt_tokens"] == 1000
+    assert usage["completion_tokens"] == 1000
+    # 1000 in @ $3/MTok + 1000 out @ $15/MTok = $0.003 + $0.015
+    assert usage["estimated_cost_usd"] == pytest.approx(0.018)
+
+
+@pytest.mark.asyncio
 async def test_generate_raises_cloud_unavailable_on_api_error():
     client = CloudLLMClient(api_key="", model="claude-3-5-sonnet-20241022")
     api_error = anthropic.APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))

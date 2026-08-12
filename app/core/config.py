@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     # Local LLM (Ollama)
     OLLAMA_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "qwen2.5:7b"
+    # Lower temperature/top_p than Ollama's defaults (0.8/0.9) to make the
+    # local model less prone to confidently inventing specifics.
+    OLLAMA_TEMPERATURE: float = 0.35
+    OLLAMA_TOP_P: float = 0.85
+    OLLAMA_TOP_K: int = 40
+    OLLAMA_REPEAT_PENALTY: float = 1.15
+    OLLAMA_NUM_PREDICT: int = 512
 
     # Speech-to-text (Faster-Whisper) for voice messages
     WHISPER_MODEL_SIZE: str = "small"
@@ -27,7 +34,10 @@ class Settings(BaseSettings):
     ANTHROPIC_PROXY_URL: str = ""
 
     # RAG
-    RAG_SCORE_THRESHOLD: float = 0.65
+    # Raised from 0.65: at 0.65 even weak/tangential matches were being
+    # treated as grounding context, which the local model would then answer
+    # from confidently regardless of how loosely it actually applied.
+    RAG_SCORE_THRESHOLD: float = 0.75
     CHROMA_PERSIST_DIR: str = "./data/chroma_db"
     EMBEDDING_MODEL_NAME: str = "all-MiniLM-L6-v2"
 
