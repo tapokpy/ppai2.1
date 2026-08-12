@@ -16,6 +16,25 @@ from app.core.scheduler import ReminderScheduler
 from app.services.project_docs_ingest import sync_project_docs
 
 
+RESTART_NOTIFICATION = "🔄 Бот перезапущен и снова принимает сообщения."
+
+
+async def notify_admins_of_restart(bot: Bot) -> None:
+    """Best-effort admin-only ping on startup. Also the practical signal for
+    "the whole PPAI stack came back up" — the bot container is the only
+    piece of this system capable of sending a Telegram message, and it
+    restarts whenever the stack does, so a single message here covers both
+    "bot restarted" and "everything restarted" from the operator's side.
+    A failure to notify one admin (e.g. they blocked the bot) must not stop
+    the others or block startup.
+    """
+    for admin_id in settings.admin_ids:
+        try:
+            await bot.send_message(admin_id, RESTART_NOTIFICATION)
+        except Exception as exc:
+            logger.warning(f"Failed to notify admin {admin_id} of restart: {exc}")
+
+
 def build_dispatcher() -> Dispatcher:
     dp = Dispatcher()
     dp.message.middleware(AuthMiddleware())
@@ -42,6 +61,8 @@ async def main() -> None:
 
     scheduler = ReminderScheduler(send_reminder_callback=partial(send_reminder_message, bot))
     scheduler.start()
+
+    await notify_admins_of_restart(bot)
 
     logger.info("Starting bot polling")
     await dp.start_polling(
