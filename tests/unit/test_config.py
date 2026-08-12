@@ -13,5 +13,5 @@ def test_admin_ids_empty_by_default():
 
 def test_defaults_are_sane():
     settings = Settings()
-    assert settings.RAG_SCORE_THRESHOLD == 0.65
+    assert settings.RAG_SCORE_THRESHOLD == 0.75
     assert settings.CLOUD_DAILY_LIMIT_PER_USER == 50

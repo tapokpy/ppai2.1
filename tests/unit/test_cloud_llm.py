@@ -16,7 +16,8 @@ async def test_generate_concatenates_text_blocks():
         content=[
             SimpleNamespace(type="text", text="Ответ "),
             SimpleNamespace(type="text", text="от Claude"),
-        ]
+        ],
+        usage=SimpleNamespace(input_tokens=10, output_tokens=5),
     )
     client._client.messages.create = AsyncMock(return_value=response)
 
@@ -30,7 +31,10 @@ async def test_generate_concatenates_text_blocks():
 async def test_generate_includes_context_when_provided():
     client = CloudLLMClient(api_key="test-key", model="claude-3-5-sonnet-20241022")
     create_mock = AsyncMock(
-        return_value=SimpleNamespace(content=[SimpleNamespace(type="text", text="ok")])
+        return_value=SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="ok")],
+            usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+        )
     )
     client._client.messages.create = create_mock
 

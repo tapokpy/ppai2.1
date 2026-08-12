@@ -65,6 +65,58 @@ def test_query_boost_is_case_insensitive(rag_engine):
     assert result["max_score"] >= 0.9
 
 
+def test_query_boost_matches_significant_word_in_full_sentence(rag_engine):
+    # Real user questions are full sentences ("что такое ПридПром"), not a
+    # bare term — the whole sentence never appears verbatim in a chunk, so
+    # the boost must match on individual significant words, not the full
+    # query string.
+    noise = "слово " * 200
+    rag_engine.add_documents(texts=[f"{noise}ПридПром{noise}"])
+
+    result = rag_engine.query("что такое ПридПром")
+
+    assert result["found"] is True
+    assert result["max_score"] >= 0.9
+
+
+def test_query_boost_ignores_common_short_words(rag_engine):
+    # A generic stopword like "такое" shouldn't spuriously boost an
+    # unrelated chunk just because it happens to contain that word.
+    noise = "слово " * 200
+    rag_engine.add_documents(texts=[f"{noise}такое{noise}"])
+
+    result = rag_engine.query("что такое ПридПром")
+
+    assert result["max_score"] < 0.9
+
+
+def test_query_widens_candidate_pool_so_buried_literal_match_still_surfaces(rag_engine):
+    # Mirrors the real failure this was built to fix: the chunk containing
+    # the exact query term ranked 13th of 15 on raw embedding similarity
+    # alone (buried under noise), so a naive top_k=5 fetch from chromadb
+    # would never even see it for the literal-match boost to act on. The
+    # fix must ask chromadb for a wider candidate pool before boosting.
+    captured_n_results = {}
+
+    class FakeCollection:
+        def query(self, query_texts, n_results):
+            captured_n_results["value"] = n_results
+            documents = [f"decoy {i} — не содержит нужный термин" for i in range(24)]
+            documents.append("шум " * 50 + "ПридПром" + " шум " * 50)
+            distances = [0.6 + i * 0.01 for i in range(24)] + [0.99]
+            metadatas = [{} for _ in documents]
+            return {"documents": [documents], "metadatas": [metadatas], "distances": [distances]}
+
+    rag_engine._collection = FakeCollection()
+
+    result = rag_engine.query("ПридПром", top_k=5)
+
+    assert captured_n_results["value"] >= 20
+    assert result["found"] is True
+    assert any("ПридПром" in doc for doc in result["documents"])
+    assert len(result["documents"]) == 5
+
+
 def test_query_empty_collection_returns_not_found(rag_engine):
     result = rag_engine.query("любой вопрос")
 
