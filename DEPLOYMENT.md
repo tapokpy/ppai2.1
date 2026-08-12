@@ -141,7 +141,9 @@ nano .env   # или любой другой редактор
 | `POSTGRES_PASSWORD` | придумать надёжный пароль |
 | `SECRET_KEY` | случайная строка, например `openssl rand -hex 32` |
 | `INTERNAL_API_TOKEN` | случайная строка, `openssl rand -hex 32` |
-| `MULLVAD_WIREGUARD_PRIVATE_KEY`, `MULLVAD_WIREGUARD_ADDRESSES` | Mullvad аккаунт → WireGuard configuration → сгенерировать конфиг под нужную страну, оттуда скопировать `PrivateKey` и `Address` |
+
+VPN-переменные (`VPN_ENDPOINT_IP` и т.д.) заполнять не нужно — по умолчанию
+VPN отключён, см. раздел 6.1.
 
 Остальные переменные (`OLLAMA_MODEL`, `RAG_SCORE_THRESHOLD`, `CLOUD_DAILY_LIMIT_PER_USER`
 и т.д.) можно оставить по умолчанию — их удобнее подстраивать после первого
@@ -157,8 +159,10 @@ nano .env   # или любой другой редактор
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Это поднимет: `postgres`, `redis`, `ollama`, `gluetun` (VPN), `api` (FastAPI),
-`bot` (Telegram), `open-webui`, `portainer`.
+Это поднимет: `postgres`, `redis`, `ollama`, `api` (FastAPI), `bot` (Telegram),
+`open-webui`, `portainer`. VPN (`gluetun`) по умолчанию **не** поднимается —
+`api`/`bot` обращаются к Anthropic напрямую, без прокси (см. раздел 6.1, если
+понадобится включить VPN позже).
 
 Первая сборка `api`/`bot` займёт несколько минут (сборка образов + установка
 зависимостей, включая тяжёлые `chromadb`/`sentence-transformers`).
@@ -169,17 +173,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml ps
 ```
 
-Все сервисы должны быть `Up` (для `postgres`/`redis`/`gluetun` — `healthy`).
-Если `gluetun` долго не становится healthy — смотрите его логи (шаг 6), обычно
-проблема в неверных WireGuard-ключах.
-
-**Если вы на Windows/WSL2:** `gluetun` требует `NET_ADMIN` и доступ к
-`/dev/net/tun` (виртуальный сетевой интерфейс для WireGuard) — в современном
-Docker Desktop с WSL2-движком это обычно работает без доп. настройки, но
-именно этот контейнер стоит проверить в первую очередь, если что-то пошло не
-так: `docker compose -f docker-compose.prod.yml logs gluetun`. Если пишет
-ошибку про `/dev/net/tun` — перезапустить Docker Desktop полностью
-(иконка в трее → Quit → запустить заново) и попробовать снова.
+Все сервисы должны быть `Up` (для `postgres`/`redis` — `healthy`).
 
 ---
 
@@ -226,22 +220,51 @@ docker compose -f docker-compose.prod.yml ps
 # логи конкретного сервиса (Ctrl+C для выхода)
 docker compose -f docker-compose.prod.yml logs -f bot
 docker compose -f docker-compose.prod.yml logs -f api
-docker compose -f docker-compose.prod.yml logs -f gluetun
 
 # health FastAPI напрямую с сервера
 curl http://localhost:8000/health
 ```
 
-Чек-лист по VPN (из технической спецификации):
-- В логах `gluetun` должна быть строка о успешном поднятии WireGuard-туннеля.
-- Сообщение боту в Telegram должно приходить и отвечать — если это работает,
-  значит прямой (не через VPN) трафик в порядке.
-- Отправьте боту вопрос, который наверняка уйдёт в Cloud (например, длинный
-  специфичный запрос) — если ответ пришёл, значит прокси до Claude через
-  `gluetun` тоже работает.
-- `docker compose -f docker-compose.prod.yml exec gluetun wget -qO- https://am.i.mullvad.net/json`
-  покажет IP и страну, которые видит внешний мир через туннель — должен быть
-  IP Mullvad, а не ваш реальный.
+Проверка каскада без VPN: сообщение боту в Telegram должно приходить и
+отвечать (RAG/Ollama), а вопрос, требующий эскалации в Cloud, должен либо
+получить ответ от Claude (прямое соединение, реальный IP сервера), либо, если
+`ANTHROPIC_API_KEY` не задан/невалиден, вернуть сообщение "расширенный
+облачный ответ сейчас недоступен" вместо падения — это ожидаемое поведение
+graceful fallback, не баг.
+
+---
+
+## 6.1 Включение VPN (опционально, сейчас отключено)
+
+По умолчанию `gluetun` не запускается, и Claude-трафик идёт напрямую. Когда
+будет готов VPN-эндпоинт с обычным протоколом WireGuard (не обфусцированный
+AmneziaWG — Gluetun его не понимает):
+
+1. Добавьте в `.env`:
+   ```
+   VPN_ENDPOINT_IP=<IP сервера>
+   VPN_ENDPOINT_PORT=<порт, обычно 51820>
+   VPN_SERVER_PUBLIC_KEY=<PublicKey из секции [Peer]>
+   VPN_CLIENT_PRIVATE_KEY=<PrivateKey из секции [Interface]>
+   VPN_CLIENT_ADDRESS=<Address из секции [Interface], напр. 10.8.1.2/32>
+   ```
+2. В `docker-compose.prod.yml` верните в сервисы `api` и `bot`:
+   ```yaml
+   environment:
+     ANTHROPIC_PROXY_URL: http://gluetun:8888
+   depends_on:
+     gluetun:
+       condition: service_healthy
+   ```
+   (сейчас закомментировано/убрано намеренно — см. коммит "Disable VPN in the
+   default prod stack for now").
+3. Запустите с профилем VPN:
+   ```bash
+   docker compose -f docker-compose.prod.yml --profile vpn up -d --build
+   ```
+4. Проверка: `docker compose -f docker-compose.prod.yml logs gluetun` должен
+   показать успешное поднятие WireGuard-туннеля; вопрос боту, уходящий в
+   Cloud, должен получать ответ через `gluetun`, а не напрямую.
 
 ---
 
@@ -253,9 +276,9 @@ curl http://localhost:8000/health
 | `open-webui` | `3000` | веб-чат для сотрудников |
 | `portainer` | `9443` | мониторинг контейнеров (см. раздел 6 tech-спеки) |
 
-`postgres`, `redis`, `ollama`, `gluetun` наружу не публикуются — доступны
-только внутри Docker-сети, как и требовала спецификация (изоляция
-инфраструктуры от внешнего мира).
+`postgres`, `redis`, `ollama` (и `gluetun`, если включите VPN) наружу не
+публикуются — доступны только внутри Docker-сети, как и требовала
+спецификация (изоляция инфраструктуры от внешнего мира).
 
 **Для реального продакшена перед публикацией портов 8000/3000/9443 наружу
 поставьте перед ними реверс-прокси с TLS** (Caddy/Traefik/nginx или встроенный
@@ -281,6 +304,11 @@ Docker-тома, `down` без `-v` их не удаляет.
 
 ## 9. Известные ограничения этого стека (см. также PR #1)
 
+- **VPN отключён по умолчанию.** Самостоятельно поднятый сервер оказался на
+  протоколе AmneziaWG (обфусцированный WireGuard), который `gluetun` не
+  поддерживает. Пока используется прямое соединение с Anthropic API; см.
+  раздел 6.1 про включение VPN, когда будет готов эндпоинт на обычном
+  WireGuard.
 - `api` и `bot` пишут в один и тот же embedded Chroma-каталог через общий том
   `app_data`. Конкурентная запись из двух процессов одновременно — риск
   (embedded Chroma не рассчитан на multi-writer). Пока оба сервиса не пишут
