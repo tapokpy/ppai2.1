@@ -12,3 +12,7 @@ data/logs/*
 data/temp/*
 !data/temp/.gitkeep
 *.egg-info/
+
+# Frontend (frontend/)
+frontend/node_modules/
+frontend/dist/
