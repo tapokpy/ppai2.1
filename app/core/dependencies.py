@@ -56,4 +56,5 @@ def build_cascade_router() -> CascadeRouter:
         cloud_llm=cloud_llm,
         redis_client=redis_client,
         cloud_daily_limit=settings.CLOUD_DAILY_LIMIT_PER_USER,
+        cloud_enabled=settings.CLOUD_ENABLED,
     )

@@ -15,3 +15,4 @@ def test_defaults_are_sane():
     settings = Settings()
     assert settings.RAG_SCORE_THRESHOLD == 0.75
     assert settings.CLOUD_DAILY_LIMIT_PER_USER == 50
+    assert settings.CLOUD_ENABLED is False

@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     WHISPER_LANGUAGE: str = "ru"
 
     # Cloud LLM (Anthropic Claude)
+    # Off by default per explicit request while docs/RAG setup is in
+    # progress — the cascade stops at the local model instead of escalating.
+    # Flip to True to re-enable cloud escalation.
+    CLOUD_ENABLED: bool = False
     ANTHROPIC_API_KEY: str = ""
     CLOUD_MODEL_NAME: str = "claude-3-5-sonnet-20241022"
     CLOUD_DAILY_LIMIT_PER_USER: int = 50

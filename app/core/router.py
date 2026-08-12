@@ -21,6 +21,9 @@ CLOUD_UNAVAILABLE_MESSAGE = (
     "Расширенный облачный ответ сейчас недоступен. "
     "Попробуйте переформулировать вопрос или обратитесь позже."
 )
+CLOUD_DISABLED_MESSAGE = (
+    "Облачный ИИ временно отключён администратором — отвечает только локальная модель."
+)
 
 
 class CascadeRouter:
@@ -31,12 +34,14 @@ class CascadeRouter:
         cloud_llm: CloudLLMClient,
         redis_client: Redis,
         cloud_daily_limit: int,
+        cloud_enabled: bool = True,
     ):
         self._rag = rag_engine
         self._local = local_llm
         self._cloud = cloud_llm
         self._redis = redis_client
         self._cloud_daily_limit = cloud_daily_limit
+        self._cloud_enabled = cloud_enabled
 
     @property
     def rag_engine(self) -> RAGEngine:
@@ -70,7 +75,11 @@ class CascadeRouter:
             )
             if text.strip() and not self._local.needs_cloud(text):
                 clean_text, confidence = self._extract_confidence(text)
-                if confidence != "low":
+                # With cloud disabled, local is the terminal step of the
+                # cascade — a low-confidence local answer is still more
+                # useful to the user than discarding it for an escalation
+                # that would just bounce off the disabled-cloud message.
+                if confidence != "low" or not self._cloud_enabled:
                     return {
                         "text": clean_text,
                         "source": "rag",
@@ -83,7 +92,7 @@ class CascadeRouter:
             text, llm_usage = await self._local.generate_with_usage(prompt, system_prompt=base_system_prompt)
             if text.strip() and not self._local.needs_cloud(text):
                 clean_text, confidence = self._extract_confidence(text)
-                if confidence != "low":
+                if confidence != "low" or not self._cloud_enabled:
                     return {
                         "text": clean_text,
                         "source": "local",
@@ -111,6 +120,16 @@ class CascadeRouter:
     async def _call_cloud(
         self, user_id: int, prompt: str, context: str | None, rag_debug: dict | None
     ) -> dict:
+        if not self._cloud_enabled:
+            return {
+                "text": CLOUD_DISABLED_MESSAGE,
+                "source": "cloud_disabled",
+                "context_used": False,
+                "rag_debug": rag_debug,
+                "confidence": None,
+                "llm_usage": None,
+            }
+
         if not await self._check_and_increment_rate_limit(user_id):
             return {
                 "text": RATE_LIMIT_MESSAGE,

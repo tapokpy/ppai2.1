@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fakeredis.aioredis import FakeRedis
 
-from app.core.router import CLOUD_UNAVAILABLE_MESSAGE, RATE_LIMIT_MESSAGE, CascadeRouter
+from app.core.router import CLOUD_DISABLED_MESSAGE, CLOUD_UNAVAILABLE_MESSAGE, RATE_LIMIT_MESSAGE, CascadeRouter
 from app.services.cloud_llm import CloudUnavailableError
 from app.services.local_llm import LocalLLMClient
 
@@ -16,6 +16,7 @@ def make_router(
     daily_limit: int = 50,
     local_usage: dict | None = None,
     cloud_usage: dict | None = None,
+    cloud_enabled: bool = True,
 ):
     documents = rag_documents or []
     rag_engine = MagicMock()
@@ -42,6 +43,7 @@ def make_router(
         cloud_llm=cloud_llm,
         redis_client=redis_client,
         cloud_daily_limit=daily_limit,
+        cloud_enabled=cloud_enabled,
     )
     return router, rag_engine, local_llm, cloud_llm, redis_client
 
@@ -261,6 +263,60 @@ async def test_missing_confidence_marker_is_not_treated_as_low():
 
     assert result["source"] == "local"
     assert result["confidence"] is None
+    cloud_llm.generate_with_usage.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cloud_disabled_returns_low_confidence_local_answer_instead_of_escalating():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False, local_response="Наверное что-то [CONFIDENCE: low]", cloud_enabled=False
+    )
+
+    result = await router.process_query(user_id=1, prompt="вопрос")
+
+    assert result["source"] == "local"
+    assert result["text"] == "Наверное что-то"
+    assert result["confidence"] == "low"
+    cloud_llm.generate_with_usage.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cloud_disabled_returns_low_confidence_rag_answer_instead_of_escalating():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=True,
+        rag_documents=["контекст документа"],
+        local_response="Наверное что-то [CONFIDENCE: low]",
+        cloud_enabled=False,
+    )
+
+    result = await router.process_query(user_id=1, prompt="вопрос")
+
+    assert result["source"] == "rag"
+    assert result["confidence"] == "low"
+    cloud_llm.generate_with_usage.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cloud_disabled_returns_friendly_message_when_local_truly_fails():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False, local_response="[NEED_CLOUD]", cloud_enabled=False
+    )
+
+    result = await router.process_query(user_id=1, prompt="сложный вопрос")
+
+    assert result["text"] == CLOUD_DISABLED_MESSAGE
+    assert result["source"] == "cloud_disabled"
+    cloud_llm.generate_with_usage.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cloud_disabled_blocks_use_cloud_override_too():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(cloud_enabled=False)
+
+    result = await router.process_query(user_id=1, prompt="вопрос", use_cloud_override=True)
+
+    assert result["text"] == CLOUD_DISABLED_MESSAGE
+    assert result["source"] == "cloud_disabled"
     cloud_llm.generate_with_usage.assert_not_called()
 
 
