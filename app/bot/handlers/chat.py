@@ -11,7 +11,9 @@ from app.bot.handlers.admin import is_admin
 from app.core.database import async_session_maker
 from app.core.router import CascadeRouter
 from app.models.sqlalchemy.activity_log import ActivityLog
+from app.models.sqlalchemy.document import Document
 from app.models.sqlalchemy.message import Message as MessageModel
+from app.models.sqlalchemy.rag_trace_event import RagTraceEvent
 from app.models.sqlalchemy.user import User
 from app.services.doc_generator import generate_docx, generate_xlsx
 from app.services.stt import Transcriber
@@ -97,6 +99,40 @@ def _format_reply(result: dict, db_user: User) -> str:
     return "\n".join(lines) + f"\n\n{result['text']}"
 
 
+def _build_message_model(db_user: User, telegram_message_id: int, prompt: str, result: dict) -> MessageModel:
+    return MessageModel(
+        user_id=db_user.id,
+        telegram_message_id=telegram_message_id,
+        prompt=prompt,
+        response=result["text"],
+        source=result["source"],
+        context_used=result["context_used"],
+        rag_debug=result.get("rag_debug"),
+        timing=result.get("timing"),
+        rag_trace_id=result.get("rag_trace_id"),
+    )
+
+
+async def _save_message_with_trace(session, message: MessageModel, trace_events: list[dict] | None) -> None:
+    """Insert the message, then its ordered RagTraceEvent rows (needs the
+    message's id, hence the flush before add_all) — one commit either way."""
+    session.add(message)
+    await session.flush()
+    if trace_events:
+        session.add_all(
+            [
+                RagTraceEvent(
+                    trace_id=message.rag_trace_id,
+                    message_id=message.id,
+                    seq=event["seq"],
+                    event_name=event["event_name"],
+                    payload=event["payload"],
+                )
+                for event in trace_events
+            ]
+        )
+
+
 async def _process_and_reply(
     message: Message,
     cascade_router: CascadeRouter,
@@ -107,17 +143,8 @@ async def _process_and_reply(
     result = await cascade_router.process_query(user_id=db_user.id, prompt=prompt)
 
     async with async_session_maker() as session:
-        session.add(
-            MessageModel(
-                user_id=db_user.id,
-                telegram_message_id=message.message_id,
-                prompt=prompt,
-                response=result["text"],
-                source=result["source"],
-                context_used=result["context_used"],
-                rag_debug=result.get("rag_debug"),
-            )
-        )
+        db_message = _build_message_model(db_user, message.message_id, prompt, result)
+        await _save_message_with_trace(session, db_message, result.get("trace_events"))
         # Group messages are already logged for every message (mentioned or not)
         # by GroupActivityMiddleware; avoid double-logging this one.
         if message.chat.type == "private":
@@ -241,17 +268,8 @@ async def ask_cloud_callback(callback: CallbackQuery, db_user: User, cascade_rou
     )
 
     async with async_session_maker() as session:
-        session.add(
-            MessageModel(
-                user_id=db_user.id,
-                telegram_message_id=callback.message.message_id,
-                prompt=stored_message.prompt,
-                response=result["text"],
-                source=result["source"],
-                context_used=result["context_used"],
-                rag_debug=result.get("rag_debug"),
-            )
-        )
+        db_message = _build_message_model(db_user, callback.message.message_id, stored_message.prompt, result)
+        await _save_message_with_trace(session, db_message, result.get("trace_events"))
         await session.commit()
 
     await callback.message.answer(_format_reply(result, db_user))
@@ -282,5 +300,18 @@ async def save_to_kb_callback(callback: CallbackQuery, db_user: User, cascade_ro
             }
         ],
     )
+
+    async with async_session_maker() as session:
+        session.add(
+            Document(
+                source="harvested",
+                filename=None,
+                uploaded_by=db_user.id,
+                chunk_count=1,
+                char_count=len(summary),
+                embedding_model=cascade_router.rag_engine.embedding_model_name,
+            )
+        )
+        await session.commit()
 
     await callback.answer("Инструкция сохранена в базу знаний")

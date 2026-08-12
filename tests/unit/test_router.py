@@ -20,6 +20,8 @@ def make_router(
 ):
     documents = rag_documents or []
     rag_engine = MagicMock()
+    rag_engine.collection_name = "knowledge_base"
+    rag_engine.embedding_model_name = "all-MiniLM-L6-v2"
     rag_engine.query.return_value = {
         "found": rag_found,
         "max_score": 0.9 if rag_found else 0.1,
@@ -29,10 +31,12 @@ def make_router(
     }
 
     local_llm = MagicMock()
+    local_llm.model_name = "qwen2.5:7b"
     local_llm.generate_with_usage = AsyncMock(return_value=(local_response, local_usage or {}))
     local_llm.needs_cloud = LocalLLMClient.needs_cloud
 
     cloud_llm = MagicMock()
+    cloud_llm.model_name = "claude-3-5-sonnet-20241022"
     cloud_llm.generate_with_usage = AsyncMock(return_value=(cloud_response, cloud_usage or {}))
 
     redis_client = FakeRedis()
@@ -360,6 +364,122 @@ async def test_cloud_disabled_blocks_use_cloud_override_too():
     assert result["text"] == CLOUD_DISABLED_MESSAGE
     assert result["source"] == "cloud_disabled"
     cloud_llm.generate_with_usage.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rag_success_emits_full_event_sequence_with_trace_id():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=True, rag_documents=["контекст документа"]
+    )
+
+    result = await router.process_query(user_id=1, prompt="вопрос")
+
+    assert result["rag_trace_id"]
+    event_names = [e["event_name"] for e in result["trace_events"]]
+    assert event_names == [
+        "retrieval_started",
+        "query_embedded",
+        "retrieval_results",
+        "chunks_selected",
+        "context_built",
+        "llm_called",
+        "answer_generated",
+    ]
+    assert [e["seq"] for e in result["trace_events"]] == list(range(1, 8))
+    assert result["trace_events"][1]["payload"]["model"] == "all-MiniLM-L6-v2"
+    assert result["trace_events"][5]["payload"]["model"] == "qwen2.5:7b"
+    assert result["trace_events"][6]["payload"]["source"] == "rag"
+
+
+@pytest.mark.asyncio
+async def test_local_only_path_skips_chunk_events():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(rag_found=False)
+
+    result = await router.process_query(user_id=1, prompt="вопрос")
+
+    event_names = [e["event_name"] for e in result["trace_events"]]
+    assert event_names == [
+        "retrieval_started",
+        "query_embedded",
+        "retrieval_results",
+        "llm_called",
+        "answer_generated",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cloud_escalation_appends_cloud_events_after_local_attempt():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False, local_response="[NEED_CLOUD]"
+    )
+
+    result = await router.process_query(user_id=1, prompt="вопрос")
+
+    event_names = [e["event_name"] for e in result["trace_events"]]
+    assert event_names == [
+        "retrieval_started",
+        "query_embedded",
+        "retrieval_results",
+        "llm_called",
+        "llm_called",
+        "answer_generated",
+    ]
+    assert result["trace_events"][-2]["payload"]["model"] == "claude-3-5-sonnet-20241022"
+    assert result["trace_events"][-1]["payload"]["source"] == "cloud"
+
+
+@pytest.mark.asyncio
+async def test_use_cloud_override_emits_only_cloud_events():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router()
+
+    result = await router.process_query(user_id=1, prompt="вопрос", use_cloud_override=True)
+
+    event_names = [e["event_name"] for e in result["trace_events"]]
+    assert event_names == ["llm_called", "answer_generated"]
+    assert result["rag_trace_id"]
+
+
+@pytest.mark.asyncio
+async def test_cloud_disabled_trace_ends_with_answer_generated():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False, local_response="[NEED_CLOUD]", cloud_enabled=False
+    )
+
+    result = await router.process_query(user_id=1, prompt="вопрос")
+
+    assert result["trace_events"][-1] == {
+        "seq": len(result["trace_events"]),
+        "event_name": "answer_generated",
+        "payload": {"source": "cloud_disabled"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_trace_ends_with_answer_generated():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False, local_response="[NEED_CLOUD]", daily_limit=0
+    )
+
+    result = await router.process_query(user_id=1, prompt="вопрос")
+
+    assert result["source"] == "rate_limited"
+    assert result["trace_events"][-1]["payload"] == {"source": "rate_limited"}
+    # Only the local model's llm_called fires (before escalation) — the
+    # rate limit blocks before a cloud llm_called would ever be emitted.
+    event_names = [e["event_name"] for e in result["trace_events"]]
+    assert event_names.count("llm_called") == 1
+
+
+@pytest.mark.asyncio
+async def test_cloud_unavailable_trace_ends_with_answer_generated():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False, local_response="[NEED_CLOUD]"
+    )
+    cloud_llm.generate_with_usage = AsyncMock(side_effect=CloudUnavailableError("missing API key"))
+
+    result = await router.process_query(user_id=1, prompt="вопрос")
+
+    assert result["trace_events"][-1]["payload"] == {"source": "cloud_unavailable"}
 
 
 @pytest.mark.asyncio

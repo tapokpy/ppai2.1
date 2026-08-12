@@ -33,6 +33,10 @@ class LocalLLMClient:
             "num_predict": num_predict,
         }
 
+    @property
+    def model_name(self) -> str:
+        return self._model
+
     async def generate(self, prompt: str, system_prompt: str | None = None) -> str:
         text, _usage = await self.generate_with_usage(prompt, system_prompt)
         return text

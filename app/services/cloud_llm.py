@@ -31,6 +31,10 @@ class CloudLLMClient:
         self._client = anthropic.AsyncAnthropic(api_key=api_key, http_client=http_client)
         self._model = model
 
+    @property
+    def model_name(self) -> str:
+        return self._model
+
     async def generate(self, prompt: str, context: str | None = None) -> str:
         text, _usage = await self.generate_with_usage(prompt, context)
         return text

@@ -15,6 +15,12 @@ async def test_generate_returns_message_content():
     assert result == "Привет!"
 
 
+def test_model_name_is_exposed():
+    client = LocalLLMClient(base_url="http://localhost:11434", model="qwen2.5:7b")
+
+    assert client.model_name == "qwen2.5:7b"
+
+
 @pytest.mark.asyncio
 async def test_generate_passes_generation_options_to_ollama():
     client = LocalLLMClient(

@@ -57,7 +57,7 @@ async def main() -> None:
     transcriber = build_transcriber()
     github_planning_client = build_github_planning_client()
 
-    sync_project_docs(cascade_router.rag_engine)
+    await sync_project_docs(cascade_router.rag_engine)
 
     scheduler = ReminderScheduler(send_reminder_callback=partial(send_reminder_message, bot))
     scheduler.start()

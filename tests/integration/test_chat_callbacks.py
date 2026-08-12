@@ -13,6 +13,7 @@ from app.bot.handlers.chat import (
     save_to_kb_callback,
 )
 from app.core.database import async_session_maker
+from app.models.sqlalchemy.document import Document as DocumentModel
 from app.models.sqlalchemy.message import Message as MessageModel
 from app.models.sqlalchemy.user import User
 from tests.integration.conftest import requires_postgres
@@ -209,9 +210,11 @@ async def test_ask_cloud_callback_reprocesses_via_cloud(clean_db):
         use_cloud_override=True,
     )
     callback.message.answer.assert_awaited_once()
-    # Non-admin: no metrics footer, no export/ask-cloud/save-kb keyboard.
-    assert callback.message.answer.call_args.args[0] == "Облачный ответ"
-    assert callback.message.answer.call_args.kwargs.get("reply_markup") is None
+    # Timing is shown to every user (not just admins); no admin debug line
+    # since this user isn't an admin, and no keyboard is attached (removed
+    # per explicit user request).
+    assert callback.message.answer.call_args.args[0] == "⏱ 4.1с\n\nОблачный ответ"
+    assert callback.message.answer.call_args.kwargs == {}
 
     async with async_session_maker() as session:
         messages = (await session.execute(select(MessageModel))).scalars().all()
@@ -227,6 +230,7 @@ async def test_save_to_kb_callback_stores_summary_in_rag(clean_db):
     cascade_router = MagicMock()
     cascade_router.local_llm.generate = AsyncMock(return_value="## Краткая инструкция\nОтвет: 24 модуля")
     cascade_router.rag_engine.add_documents = MagicMock()
+    cascade_router.rag_engine.embedding_model_name = "all-MiniLM-L6-v2"
 
     callback = SimpleNamespace(data="save_kb:100", answer=AsyncMock())
 
@@ -238,6 +242,13 @@ async def test_save_to_kb_callback_stores_summary_in_rag(clean_db):
     assert call_kwargs["texts"] == ["## Краткая инструкция\nОтвет: 24 модуля"]
     assert call_kwargs["metadatas"][0]["source"] == "harvested"
     callback.answer.assert_awaited_once_with("Инструкция сохранена в базу знаний")
+
+    async with async_session_maker() as session:
+        documents = (await session.execute(select(DocumentModel))).scalars().all()
+
+    assert len(documents) == 1
+    assert documents[0].source == "harvested"
+    assert documents[0].uploaded_by == user.id
 
 
 @pytest.mark.asyncio

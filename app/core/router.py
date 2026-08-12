@@ -1,5 +1,6 @@
 import re
 import time
+import uuid
 from datetime import date
 
 from loguru import logger
@@ -64,21 +65,51 @@ class CascadeRouter:
         # (CPU-only Ollama) dominates almost every response, which the total
         # alone doesn't make obvious.
         timing: dict[str, float] = {}
+        # Ordered pipeline trace (query_embedded/retrieval_started/... per
+        # OPEN_SOURCE_STRATEGY.md §6.2) — powers the RAG visualization admin
+        # panel's per-query timeline. One trace_id groups every event emitted
+        # while answering this one prompt, regardless of which branch below
+        # actually produced the answer.
+        trace_id = str(uuid.uuid4())
+        events: list[dict] = []
 
         if use_cloud_override:
-            return await self._call_cloud(user_id, prompt, context=None, rag_debug=None, timing=timing)
+            result = await self._call_cloud(
+                user_id, prompt, context=None, rag_debug=None, timing=timing, events=events
+            )
+            result["rag_trace_id"] = trace_id
+            return result
 
         base_system_prompt = get_system_prompt(detect_prompt_type(prompt)) + CONFIDENCE_INSTRUCTION
 
+        self._emit(events, "retrieval_started", {"collection": self._rag.collection_name})
         rag_start = time.monotonic()
         rag_result = self._rag.query(prompt)
         timing["rag_seconds"] = round(time.monotonic() - rag_start, 2)
+        self._emit(events, "query_embedded", {"model": self._rag.embedding_model_name, "query": prompt})
+        self._emit(
+            events,
+            "retrieval_results",
+            {
+                "found": rag_result["found"],
+                "max_score": rag_result["max_score"],
+                "retrieved": [
+                    {"snippet": doc[:200], "score": score, "metadata": meta}
+                    for doc, score, meta in zip(
+                        rag_result["documents"], rag_result["scores"], rag_result["metadatas"]
+                    )
+                ],
+            },
+        )
         context = None
         rag_debug = None
 
         if rag_result["found"]:
             context = "\n\n".join(rag_result["documents"])
             rag_debug = self._build_rag_debug(rag_result)
+            self._emit(events, "chunks_selected", {"count": len(rag_result["documents"])})
+            self._emit(events, "context_built", {"chunk_count": len(rag_result["documents"]), "char_count": len(context)})
+            self._emit(events, "llm_called", {"model": self._local.model_name, "source": "local"})
             local_start = time.monotonic()
             text, llm_usage = await self._local.generate_with_usage(
                 prompt, system_prompt=f"{base_system_prompt}\n\nКонтекст:\n{context}"
@@ -91,6 +122,11 @@ class CascadeRouter:
                 # useful to the user than discarding it for an escalation
                 # that would just bounce off the disabled-cloud message.
                 if confidence != "low" or not self._cloud_enabled:
+                    self._emit(
+                        events,
+                        "answer_generated",
+                        {"source": "rag", "confidence": confidence, "length": len(clean_text), "usage": llm_usage},
+                    )
                     return {
                         "text": clean_text,
                         "source": "rag",
@@ -99,14 +135,22 @@ class CascadeRouter:
                         "confidence": confidence,
                         "llm_usage": llm_usage,
                         "timing": timing,
+                        "rag_trace_id": trace_id,
+                        "trace_events": events,
                     }
         else:
+            self._emit(events, "llm_called", {"model": self._local.model_name, "source": "local"})
             local_start = time.monotonic()
             text, llm_usage = await self._local.generate_with_usage(prompt, system_prompt=base_system_prompt)
             timing["local_seconds"] = round(time.monotonic() - local_start, 2)
             if text.strip() and not self._local.needs_cloud(text):
                 clean_text, confidence = self._extract_confidence(text)
                 if confidence != "low" or not self._cloud_enabled:
+                    self._emit(
+                        events,
+                        "answer_generated",
+                        {"source": "local", "confidence": confidence, "length": len(clean_text), "usage": llm_usage},
+                    )
                     return {
                         "text": clean_text,
                         "source": "local",
@@ -115,9 +159,19 @@ class CascadeRouter:
                         "confidence": confidence,
                         "llm_usage": llm_usage,
                         "timing": timing,
+                        "rag_trace_id": trace_id,
+                        "trace_events": events,
                     }
 
-        return await self._call_cloud(user_id, prompt, context=context, rag_debug=rag_debug, timing=timing)
+        result = await self._call_cloud(
+            user_id, prompt, context=context, rag_debug=rag_debug, timing=timing, events=events
+        )
+        result["rag_trace_id"] = trace_id
+        return result
+
+    @staticmethod
+    def _emit(events: list[dict], event_name: str, payload: dict) -> None:
+        events.append({"seq": len(events) + 1, "event_name": event_name, "payload": payload})
 
     @staticmethod
     def _extract_confidence(text: str) -> tuple[str, str | None]:
@@ -139,10 +193,13 @@ class CascadeRouter:
         context: str | None,
         rag_debug: dict | None,
         timing: dict[str, float] | None = None,
+        events: list[dict] | None = None,
     ) -> dict:
         timing = timing if timing is not None else {}
+        events = events if events is not None else []
 
         if not self._cloud_enabled:
+            self._emit(events, "answer_generated", {"source": "cloud_disabled"})
             return {
                 "text": CLOUD_DISABLED_MESSAGE,
                 "source": "cloud_disabled",
@@ -151,9 +208,11 @@ class CascadeRouter:
                 "confidence": None,
                 "llm_usage": None,
                 "timing": timing,
+                "trace_events": events,
             }
 
         if not await self._check_and_increment_rate_limit(user_id):
+            self._emit(events, "answer_generated", {"source": "rate_limited"})
             return {
                 "text": RATE_LIMIT_MESSAGE,
                 "source": "rate_limited",
@@ -162,14 +221,17 @@ class CascadeRouter:
                 "confidence": None,
                 "llm_usage": None,
                 "timing": timing,
+                "trace_events": events,
             }
 
+        self._emit(events, "llm_called", {"model": self._cloud.model_name, "source": "cloud"})
         cloud_start = time.monotonic()
         try:
             text, llm_usage = await self._cloud.generate_with_usage(prompt, context=context)
         except CloudUnavailableError as exc:
             timing["cloud_seconds"] = round(time.monotonic() - cloud_start, 2)
             logger.warning(f"Cloud LLM unavailable for user {user_id}: {exc}")
+            self._emit(events, "answer_generated", {"source": "cloud_unavailable"})
             return {
                 "text": CLOUD_UNAVAILABLE_MESSAGE,
                 "source": "cloud_unavailable",
@@ -178,8 +240,10 @@ class CascadeRouter:
                 "confidence": None,
                 "llm_usage": None,
                 "timing": timing,
+                "trace_events": events,
             }
         timing["cloud_seconds"] = round(time.monotonic() - cloud_start, 2)
+        self._emit(events, "answer_generated", {"source": "cloud", "length": len(text), "usage": llm_usage})
 
         return {
             "text": text,
@@ -192,6 +256,7 @@ class CascadeRouter:
             "confidence": None,
             "llm_usage": llm_usage,
             "timing": timing,
+            "trace_events": events,
         }
 
     @staticmethod

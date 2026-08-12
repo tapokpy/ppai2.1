@@ -28,15 +28,26 @@ class RAGEngine:
         collection_name: str = "knowledge_base",
         embedding_function: EmbeddingFunction | None = None,
         client: ClientAPI | None = None,
+        embedding_model_name: str = "",
     ):
         self._threshold = score_threshold
         self._client = client or chromadb.PersistentClient(path=persist_dir)
+        self._collection_name = collection_name
+        self._embedding_model_name = embedding_model_name
 
         kwargs: dict[str, Any] = {"metadata": {"hnsw:space": "cosine"}}
         if embedding_function is not None:
             kwargs["embedding_function"] = embedding_function
 
         self._collection = self._client.get_or_create_collection(name=collection_name, **kwargs)
+
+    @property
+    def collection_name(self) -> str:
+        return self._collection_name
+
+    @property
+    def embedding_model_name(self) -> str:
+        return self._embedding_model_name
 
     def add_documents(
         self,
@@ -113,4 +124,22 @@ class RAGEngine:
             "documents": documents,
             "metadatas": metadatas,
             "scores": scores,
+        }
+
+    def get_document_chunks(self, source: str, filename: str | None) -> dict:
+        """Live-fetch every chunk belonging to one ingested document, keyed
+        by the same (source, filename) metadata written at ingestion time
+        (project_docs_ingest.py / documents.py). Chunk text/embeddings are
+        never duplicated into Postgres — this is the read path the admin
+        "Document"/"Чанкинг"/"Эмбеддинг" screens use instead."""
+        where: dict[str, Any] = {"source": source}
+        if filename is not None:
+            where = {"$and": [{"source": source}, {"filename": filename}]}
+
+        results = self._collection.get(where=where, include=["documents", "metadatas"])
+
+        return {
+            "ids": results.get("ids", []),
+            "documents": results.get("documents", []),
+            "metadatas": results.get("metadatas", []),
         }

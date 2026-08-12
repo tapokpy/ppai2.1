@@ -8,6 +8,12 @@ import pytest
 from app.services.cloud_llm import CloudLLMClient, CloudUnavailableError
 
 
+def test_model_name_is_exposed():
+    client = CloudLLMClient(api_key="test-key", model="claude-3-5-sonnet-20241022")
+
+    assert client.model_name == "claude-3-5-sonnet-20241022"
+
+
 @pytest.mark.asyncio
 async def test_generate_concatenates_text_blocks():
     client = CloudLLMClient(api_key="test-key", model="claude-3-5-sonnet-20241022")

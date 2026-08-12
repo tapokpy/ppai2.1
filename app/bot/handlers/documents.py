@@ -6,7 +6,9 @@ from aiogram import Bot, F, Router
 from aiogram.types import Message
 
 from app.bot.filters import ShouldRespondFilter
+from app.core.database import async_session_maker
 from app.core.router import CascadeRouter
+from app.models.sqlalchemy.document import Document
 from app.models.sqlalchemy.user import User
 from app.services.pdf_parser import chunk_text, extract_text
 
@@ -49,5 +51,18 @@ async def handle_document(message: Message, bot: Bot, cascade_router: CascadeRou
         texts=chunks,
         metadatas=[{"source": "pdf_upload", "filename": filename, "uploaded_by": str(db_user.id)} for _ in chunks],
     )
+
+    async with async_session_maker() as session:
+        session.add(
+            Document(
+                source="pdf_upload",
+                filename=filename,
+                uploaded_by=db_user.id,
+                chunk_count=len(chunks),
+                char_count=len(text),
+                embedding_model=cascade_router.rag_engine.embedding_model_name,
+            )
+        )
+        await session.commit()
 
     await message.answer(f"Документ «{filename}» обработан и добавлен в базу знаний ({len(chunks)} фрагм.).")

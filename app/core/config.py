@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     JWT_EXPIRES_HOURS: int = 8
     OTT_EXPIRES_SECONDS: int = 300
 
+    # RAG visualization admin panel (/dashboard bot command)
+    # API_INTERNAL_BASE_URL: how the bot reaches the api service over the
+    # docker network to mint a login link (server-to-server, X-Internal-Token
+    # auth — see app/api/v1/endpoints/auth.py::generate_ott).
+    # WEB_DASHBOARD_URL: the address the admin's own browser opens — must be
+    # a real reachable host:port (not the docker-internal "api" hostname).
+    API_INTERNAL_BASE_URL: str = "http://api:8000/api/v1"
+    WEB_DASHBOARD_URL: str = "http://localhost:8080"
+
     # GitHub Planning (Loki: in-chat "todo3"/"план3" capture -> PLANNING.md)
     GITHUB_TOKEN: str = ""
     GITHUB_REPO: str = "tapokpy/ppai"

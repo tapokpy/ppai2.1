@@ -16,7 +16,39 @@ def rag_engine():
         collection_name=f"test-{uuid.uuid4().hex}",
         embedding_function=FakeEmbeddingFunction(),
         client=client,
+        embedding_model_name="fake-embedding-model",
     )
+
+
+def test_collection_name_and_embedding_model_name_are_exposed(rag_engine):
+    assert rag_engine.collection_name.startswith("test-")
+    assert rag_engine.embedding_model_name == "fake-embedding-model"
+
+
+def test_get_document_chunks_returns_only_matching_document(rag_engine):
+    rag_engine.add_documents(
+        texts=["Чанк 1 про модуль P2.5", "Чанк 2 про модуль P2.5"],
+        metadatas=[
+            {"source": "project_docs", "filename": "ARCHITECTURE.md", "chunk_index": 0},
+            {"source": "project_docs", "filename": "ARCHITECTURE.md", "chunk_index": 1},
+        ],
+    )
+    rag_engine.add_documents(
+        texts=["Другой документ"],
+        metadatas=[{"source": "project_docs", "filename": "README.md", "chunk_index": 0}],
+    )
+
+    result = rag_engine.get_document_chunks("project_docs", "ARCHITECTURE.md")
+
+    assert len(result["documents"]) == 2
+    assert all(m["filename"] == "ARCHITECTURE.md" for m in result["metadatas"])
+
+
+def test_get_document_chunks_returns_empty_for_unknown_document(rag_engine):
+    result = rag_engine.get_document_chunks("project_docs", "NOPE.md")
+
+    assert result["documents"] == []
+    assert result["ids"] == []
 
 
 def test_query_finds_relevant_document(rag_engine):
