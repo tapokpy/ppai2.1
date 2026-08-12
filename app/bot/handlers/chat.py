@@ -8,7 +8,6 @@ from sqlalchemy import select
 
 from app.bot.filters import ShouldRespondFilter
 from app.bot.handlers.admin import is_admin
-from app.bot.keyboards.inline import response_actions
 from app.core.database import async_session_maker
 from app.core.router import CascadeRouter
 from app.models.sqlalchemy.activity_log import ActivityLog
@@ -114,7 +113,7 @@ async def _process_and_reply(
             )
         await session.commit()
 
-    await message.answer(_format_reply(result, db_user), reply_markup=response_actions(message.message_id))
+    await message.answer(_format_reply(result, db_user))
 
 
 @router.message(F.text, ShouldRespondFilter())
@@ -237,9 +236,7 @@ async def ask_cloud_callback(callback: CallbackQuery, db_user: User, cascade_rou
         )
         await session.commit()
 
-    await callback.message.answer(
-        _format_reply(result, db_user), reply_markup=response_actions(callback.message.message_id)
-    )
+    await callback.message.answer(_format_reply(result, db_user))
     await callback.answer()
 
 

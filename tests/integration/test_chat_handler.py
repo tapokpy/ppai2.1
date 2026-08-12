@@ -43,10 +43,10 @@ async def test_handle_text_saves_history_and_replies(clean_db):
 
     cascade_router.process_query.assert_awaited_once_with(user_id=user.id, prompt="Привет")
     message.answer.assert_awaited_once()
-    # Every user (not just admins) sees the timing line before the answer,
-    # and the export/ask-cloud/save-to-KB keyboard is always attached.
+    # Every user (not just admins) sees the timing line before the answer.
+    # No keyboard is attached (removed per explicit user request).
     assert message.answer.call_args.args[0] == "⏱ 1.23с\n\nОтвет бота"
-    assert message.answer.call_args.kwargs["reply_markup"] is not None
+    assert message.answer.call_args.kwargs == {}
 
     async with async_session_maker() as session:
         messages = (await session.execute(select(MessageModel))).scalars().all()
