@@ -40,6 +40,31 @@ def test_query_not_found_for_unrelated_text(rag_engine):
     assert result["found"] is False
 
 
+def test_query_boosts_score_when_query_appears_literally_in_chunk(rag_engine):
+    # Lots of unrelated filler dilutes the embedding similarity for a short
+    # proper-noun query far below the chunk's literal-match relevance —
+    # mirrors the real failure observed live (a chunk titled with the
+    # project's own name scored 0.31, well below threshold, purely on
+    # embedding similarity even though the term was right there in the text).
+    noise = "слово " * 200
+    rag_engine.add_documents(texts=[f"{noise}ПридПром{noise}"])
+
+    result = rag_engine.query("ПридПром")
+
+    assert result["found"] is True
+    assert result["max_score"] >= 0.9
+
+
+def test_query_boost_is_case_insensitive(rag_engine):
+    noise = "слово " * 200
+    rag_engine.add_documents(texts=[f"{noise}ПридПром{noise}"])
+
+    result = rag_engine.query("придпром")
+
+    assert result["found"] is True
+    assert result["max_score"] >= 0.9
+
+
 def test_query_empty_collection_returns_not_found(rag_engine):
     result = rag_engine.query("любой вопрос")
 

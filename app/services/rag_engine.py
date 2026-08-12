@@ -54,6 +54,20 @@ class RAGEngine:
         distances = results["distances"][0] if results["distances"] else []
         scores = [1 - d for d in distances]
 
+        # Hybrid boost: pure embedding similarity ranks short, proper-noun
+        # queries (company/product names) surprisingly poorly against long
+        # chunks with this embedding model, even when the chunk contains the
+        # term verbatim (observed live: the chunk titled with the project's
+        # own name scored below chunks about unrelated setup instructions).
+        # If the query appears literally in a retrieved chunk, trust that
+        # over the embedding score.
+        query_lower = query_text.strip().lower()
+        if query_lower:
+            scores = [
+                max(score, 0.9) if query_lower in doc.lower() else score
+                for score, doc in zip(scores, documents)
+            ]
+
         max_score = max(scores) if scores else 0.0
 
         return {
