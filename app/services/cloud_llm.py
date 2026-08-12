@@ -47,7 +47,12 @@ class CloudLLMClient:
                 max_tokens=2048,
                 messages=[{"role": "user", "content": user_content}],
             )
-        except anthropic.APIError as exc:
+        except Exception as exc:
+            # Catches anthropic.APIError (network/HTTP-level failures) *and*
+            # the plain TypeError the SDK raises client-side, before any
+            # request is sent, when api_key is empty/missing — that one
+            # isn't an APIError subclass, so a narrower except here silently
+            # let it crash the whole request instead of degrading gracefully.
             raise CloudUnavailableError(str(exc)) from exc
 
         text = "".join(block.text for block in response.content if block.type == "text")

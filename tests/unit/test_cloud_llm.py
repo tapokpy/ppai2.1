@@ -69,6 +69,24 @@ async def test_generate_raises_cloud_unavailable_on_api_error():
         await client.generate("Вопрос")
 
 
+@pytest.mark.asyncio
+async def test_generate_raises_cloud_unavailable_when_api_key_missing():
+    """Regression test: an empty/missing ANTHROPIC_API_KEY makes the SDK
+    raise a plain TypeError from _validate_headers *before* any request is
+    sent — not an anthropic.APIError subclass. A live deployment without a
+    Claude key hit this: the whole message silently never got a reply
+    because the old except clause only caught anthropic.APIError."""
+    client = CloudLLMClient(api_key="", model="claude-3-5-sonnet-20241022")
+    client._client.messages.create = AsyncMock(
+        side_effect=TypeError(
+            "Could not resolve authentication method. Expected either api_key or auth_token to be set."
+        )
+    )
+
+    with pytest.raises(CloudUnavailableError):
+        await client.generate("Вопрос")
+
+
 def test_no_proxy_by_default():
     with patch("app.services.cloud_llm.anthropic.AsyncAnthropic") as anthropic_cls:
         CloudLLMClient(api_key="test-key", model="claude-3-5-sonnet-20241022")
