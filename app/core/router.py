@@ -1,3 +1,4 @@
+import time
 from datetime import date
 
 from loguru import logger
@@ -42,6 +43,12 @@ class CascadeRouter:
         return self._local
 
     async def process_query(self, user_id: int, prompt: str, use_cloud_override: bool = False) -> dict:
+        start = time.monotonic()
+        result = await self._process_query(user_id, prompt, use_cloud_override)
+        result["elapsed_seconds"] = round(time.monotonic() - start, 2)
+        return result
+
+    async def _process_query(self, user_id: int, prompt: str, use_cloud_override: bool) -> dict:
         if use_cloud_override:
             return await self._call_cloud(user_id, prompt, context=None, rag_debug=None)
 

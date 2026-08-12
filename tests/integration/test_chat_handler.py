@@ -27,6 +27,7 @@ async def test_handle_text_saves_history_and_replies(clean_db):
         "text": "Ответ бота",
         "source": "local",
         "context_used": False,
+        "elapsed_seconds": 1.23,
     }
 
     message = SimpleNamespace(
@@ -40,7 +41,7 @@ async def test_handle_text_saves_history_and_replies(clean_db):
 
     cascade_router.process_query.assert_awaited_once_with(user_id=user.id, prompt="Привет")
     message.answer.assert_awaited_once()
-    assert message.answer.call_args.args[0] == "Ответ бота"
+    assert message.answer.call_args.args[0] == "⏱ 1.23с\n\nОтвет бота"
 
     async with async_session_maker() as session:
         messages = (await session.execute(select(MessageModel))).scalars().all()
@@ -49,8 +50,37 @@ async def test_handle_text_saves_history_and_replies(clean_db):
     assert len(messages) == 1
     assert messages[0].source == "local"
     assert messages[0].prompt == "Привет"
+    # DB stores the raw answer text; the timing prefix is a display-only concern.
+    assert messages[0].response == "Ответ бота"
     assert len(logs) == 1
     assert logs[0].chat_id == 999
+
+
+@pytest.mark.asyncio
+async def test_handle_text_replies_without_prefix_when_elapsed_seconds_missing(clean_db):
+    async with async_session_maker() as session:
+        user = User(telegram_id=559, username="engineer5")
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+    cascade_router = AsyncMock()
+    cascade_router.process_query.return_value = {
+        "text": "Ответ бота",
+        "source": "local",
+        "context_used": False,
+    }
+
+    message = SimpleNamespace(
+        text="Привет",
+        message_id=13,
+        chat=SimpleNamespace(id=1003, type="private"),
+        answer=AsyncMock(),
+    )
+
+    await handle_text(message, cascade_router, user)
+
+    assert message.answer.call_args.args[0] == "Ответ бота"
 
 
 @pytest.mark.asyncio
@@ -98,6 +128,7 @@ async def test_handle_voice_transcribes_and_replies(clean_db):
         "text": "Ответ бота",
         "source": "local",
         "context_used": False,
+        "elapsed_seconds": 3.5,
     }
 
     bot = SimpleNamespace(
@@ -121,7 +152,7 @@ async def test_handle_voice_transcribes_and_replies(clean_db):
         user_id=user.id, prompt="Расскажи про шаг пикселя"
     )
     message.answer.assert_awaited_once()
-    assert message.answer.call_args.args[0] == "Ответ бота"
+    assert message.answer.call_args.args[0] == "⏱ 3.5с\n\nОтвет бота"
 
     async with async_session_maker() as session:
         messages = (await session.execute(select(MessageModel))).scalars().all()

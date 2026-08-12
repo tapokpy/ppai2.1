@@ -59,6 +59,7 @@ async def test_uses_rag_when_context_found_and_local_can_answer():
 
     result = await router.process_query(user_id=1, prompt="вопрос")
 
+    assert isinstance(result.pop("elapsed_seconds"), float)
     assert result == {
         "text": "ответ",
         "source": "rag",
@@ -79,6 +80,7 @@ async def test_falls_back_to_local_when_rag_not_found():
 
     result = await router.process_query(user_id=1, prompt="вопрос")
 
+    assert isinstance(result.pop("elapsed_seconds"), float)
     assert result == {"text": "ответ", "source": "local", "context_used": False, "rag_debug": None}
     cloud_llm.generate.assert_not_called()
 
@@ -91,6 +93,7 @@ async def test_escalates_to_cloud_when_local_signals_need_cloud():
 
     result = await router.process_query(user_id=1, prompt="сложный вопрос")
 
+    assert isinstance(result.pop("elapsed_seconds"), float)
     assert result == {
         "text": "облачный ответ",
         "source": "cloud",
@@ -134,6 +137,7 @@ async def test_cloud_rate_limit_blocks_after_daily_limit():
     await router.process_query(user_id=42, prompt="q2")
     result = await router.process_query(user_id=42, prompt="q3")
 
+    assert isinstance(result.pop("elapsed_seconds"), float)
     assert result == {
         "text": RATE_LIMIT_MESSAGE,
         "source": "rate_limited",
@@ -152,12 +156,23 @@ async def test_cloud_unavailable_returns_friendly_message_without_raising():
 
     result = await router.process_query(user_id=1, prompt="сложный вопрос")
 
+    assert isinstance(result.pop("elapsed_seconds"), float)
     assert result == {
         "text": CLOUD_UNAVAILABLE_MESSAGE,
         "source": "cloud_unavailable",
         "context_used": False,
         "rag_debug": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_process_query_reports_elapsed_seconds():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(rag_found=False)
+
+    result = await router.process_query(user_id=1, prompt="вопрос")
+
+    assert isinstance(result["elapsed_seconds"], float)
+    assert result["elapsed_seconds"] >= 0
 
 
 @pytest.mark.asyncio

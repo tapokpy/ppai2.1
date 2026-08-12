@@ -190,6 +190,7 @@ async def test_ask_cloud_callback_reprocesses_via_cloud(clean_db):
         "text": "Облачный ответ",
         "source": "cloud",
         "context_used": False,
+        "elapsed_seconds": 4.1,
     }
 
     callback = SimpleNamespace(
@@ -206,7 +207,7 @@ async def test_ask_cloud_callback_reprocesses_via_cloud(clean_db):
         use_cloud_override=True,
     )
     callback.message.answer.assert_awaited_once()
-    assert callback.message.answer.call_args.args[0] == "Облачный ответ"
+    assert callback.message.answer.call_args.args[0] == "⏱ 4.1с\n\nОблачный ответ"
 
     async with async_session_maker() as session:
         messages = (await session.execute(select(MessageModel))).scalars().all()

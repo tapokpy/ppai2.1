@@ -21,6 +21,13 @@ router = Router(name="chat")
 VOICE_TEMP_DIR = Path("data/temp")
 
 
+def _with_timing(result: dict) -> str:
+    elapsed = result.get("elapsed_seconds")
+    if elapsed is None:
+        return result["text"]
+    return f"⏱ {elapsed}с\n\n{result['text']}"
+
+
 async def _process_and_reply(
     message: Message,
     cascade_router: CascadeRouter,
@@ -55,7 +62,7 @@ async def _process_and_reply(
             )
         await session.commit()
 
-    await message.answer(result["text"], reply_markup=response_actions(message.message_id))
+    await message.answer(_with_timing(result), reply_markup=response_actions(message.message_id))
 
 
 @router.message(F.text, ShouldRespondFilter())
@@ -178,7 +185,9 @@ async def ask_cloud_callback(callback: CallbackQuery, db_user: User, cascade_rou
         )
         await session.commit()
 
-    await callback.message.answer(result["text"], reply_markup=response_actions(callback.message.message_id))
+    await callback.message.answer(
+        _with_timing(result), reply_markup=response_actions(callback.message.message_id)
+    )
     await callback.answer()
 
 
