@@ -45,11 +45,29 @@ def _basic_metrics_line(result: dict) -> str:
     return " · ".join(parts)
 
 
+_TIMING_LABELS = (("rag_seconds", "rag"), ("local_seconds", "llm"), ("cloud_seconds", "cloud"))
+
+
+def _timing_breakdown(result: dict) -> str:
+    """Per-phase breakdown of the total ⏱ shown above — answers "why did
+    this take so long" (almost always: local Ollama inference is CPU-only
+    and dominates every response; RAG lookup itself is near-instant)."""
+    timing = result.get("timing")
+    if not timing:
+        return ""
+    parts = [f"{label} {timing[key]}с" for key, label in _TIMING_LABELS if key in timing]
+    return " + ".join(parts)
+
+
 def _admin_debug_line(result: dict) -> str:
-    """Extra diagnostic detail (source, RAG score, token usage/estimated
-    cost) appended only for admins — everyone else just gets the timing/
-    confidence line above."""
+    """Extra diagnostic detail (source, per-phase timing breakdown, RAG
+    score, token usage/estimated cost) appended only for admins — everyone
+    else just gets the timing/confidence line above."""
     parts = [str(result.get("source", "?"))]
+
+    timing_breakdown = _timing_breakdown(result)
+    if timing_breakdown:
+        parts.append(timing_breakdown)
 
     rag_debug = result.get("rag_debug")
     if rag_debug:

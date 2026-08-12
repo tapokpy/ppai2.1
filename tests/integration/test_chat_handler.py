@@ -132,6 +132,45 @@ async def test_handle_text_shows_extra_debug_line_to_admin(clean_db):
 
 
 @pytest.mark.asyncio
+async def test_handle_text_shows_timing_breakdown_to_admin(clean_db):
+    async with async_session_maker() as session:
+        user = User(telegram_id=562, username="admin_engineer2")
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+    cascade_router = AsyncMock()
+    cascade_router.process_query.return_value = {
+        "text": "Сечение кабеля 4 кв.мм",
+        "source": "rag",
+        "context_used": True,
+        "elapsed_seconds": 74.36,
+        "confidence": "low",
+        "rag_debug": {"max_score": 0.9, "retrieved": []},
+        "llm_usage": None,
+        "timing": {"rag_seconds": 0.02, "local_seconds": 74.3},
+    }
+
+    message = SimpleNamespace(
+        text="какое сечение кабеля?",
+        message_id=16,
+        chat=SimpleNamespace(id=1006, type="private"),
+        answer=AsyncMock(),
+    )
+
+    with patch("app.bot.handlers.admin.settings") as settings_mock:
+        settings_mock.admin_ids = [562]
+        await handle_text(message, cascade_router, user)
+
+    reply = message.answer.call_args.args[0]
+    assert reply == (
+        "⏱ 74.36с · ❓ low\n"
+        "🔧 rag · rag 0.02с + llm 74.3с · score 0.90\n\n"
+        "Сечение кабеля 4 кв.мм"
+    )
+
+
+@pytest.mark.asyncio
 async def test_handle_text_replies_without_prefix_when_no_metrics_present(clean_db):
     async with async_session_maker() as session:
         user = User(telegram_id=559, username="engineer5")

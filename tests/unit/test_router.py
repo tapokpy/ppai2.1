@@ -267,6 +267,48 @@ async def test_missing_confidence_marker_is_not_treated_as_low():
 
 
 @pytest.mark.asyncio
+async def test_local_only_path_reports_rag_and_local_timing():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(rag_found=False)
+
+    result = await router.process_query(user_id=1, prompt="вопрос")
+
+    assert set(result["timing"].keys()) == {"rag_seconds", "local_seconds"}
+    assert result["timing"]["rag_seconds"] >= 0
+    assert result["timing"]["local_seconds"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_rag_path_reports_rag_and_local_timing():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=True, rag_documents=["контекст документа"]
+    )
+
+    result = await router.process_query(user_id=1, prompt="вопрос")
+
+    assert set(result["timing"].keys()) == {"rag_seconds", "local_seconds"}
+
+
+@pytest.mark.asyncio
+async def test_cloud_escalation_adds_cloud_timing_on_top_of_rag_and_local():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False, local_response="[NEED_CLOUD]"
+    )
+
+    result = await router.process_query(user_id=1, prompt="сложный вопрос")
+
+    assert set(result["timing"].keys()) == {"rag_seconds", "local_seconds", "cloud_seconds"}
+
+
+@pytest.mark.asyncio
+async def test_use_cloud_override_reports_only_cloud_timing():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router()
+
+    result = await router.process_query(user_id=1, prompt="вопрос", use_cloud_override=True)
+
+    assert set(result["timing"].keys()) == {"cloud_seconds"}
+
+
+@pytest.mark.asyncio
 async def test_cloud_disabled_returns_low_confidence_local_answer_instead_of_escalating():
     router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
         rag_found=False, local_response="Наверное что-то [CONFIDENCE: low]", cloud_enabled=False

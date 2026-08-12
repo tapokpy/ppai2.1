@@ -58,21 +58,32 @@ class CascadeRouter:
         return result
 
     async def _process_query(self, user_id: int, prompt: str, use_cloud_override: bool) -> dict:
+        # Per-phase timings (rag/local/cloud, in seconds) so the Telegram
+        # metrics line can show *where* the total elapsed time actually went
+        # instead of just the opaque total — the local model's own inference
+        # (CPU-only Ollama) dominates almost every response, which the total
+        # alone doesn't make obvious.
+        timing: dict[str, float] = {}
+
         if use_cloud_override:
-            return await self._call_cloud(user_id, prompt, context=None, rag_debug=None)
+            return await self._call_cloud(user_id, prompt, context=None, rag_debug=None, timing=timing)
 
         base_system_prompt = get_system_prompt(detect_prompt_type(prompt)) + CONFIDENCE_INSTRUCTION
 
+        rag_start = time.monotonic()
         rag_result = self._rag.query(prompt)
+        timing["rag_seconds"] = round(time.monotonic() - rag_start, 2)
         context = None
         rag_debug = None
 
         if rag_result["found"]:
             context = "\n\n".join(rag_result["documents"])
             rag_debug = self._build_rag_debug(rag_result)
+            local_start = time.monotonic()
             text, llm_usage = await self._local.generate_with_usage(
                 prompt, system_prompt=f"{base_system_prompt}\n\nКонтекст:\n{context}"
             )
+            timing["local_seconds"] = round(time.monotonic() - local_start, 2)
             if text.strip() and not self._local.needs_cloud(text):
                 clean_text, confidence = self._extract_confidence(text)
                 # With cloud disabled, local is the terminal step of the
@@ -87,9 +98,12 @@ class CascadeRouter:
                         "rag_debug": rag_debug,
                         "confidence": confidence,
                         "llm_usage": llm_usage,
+                        "timing": timing,
                     }
         else:
+            local_start = time.monotonic()
             text, llm_usage = await self._local.generate_with_usage(prompt, system_prompt=base_system_prompt)
+            timing["local_seconds"] = round(time.monotonic() - local_start, 2)
             if text.strip() and not self._local.needs_cloud(text):
                 clean_text, confidence = self._extract_confidence(text)
                 if confidence != "low" or not self._cloud_enabled:
@@ -100,9 +114,10 @@ class CascadeRouter:
                         "rag_debug": None,
                         "confidence": confidence,
                         "llm_usage": llm_usage,
+                        "timing": timing,
                     }
 
-        return await self._call_cloud(user_id, prompt, context=context, rag_debug=rag_debug)
+        return await self._call_cloud(user_id, prompt, context=context, rag_debug=rag_debug, timing=timing)
 
     @staticmethod
     def _extract_confidence(text: str) -> tuple[str, str | None]:
@@ -118,8 +133,15 @@ class CascadeRouter:
         return clean_text, match.group(1).lower()
 
     async def _call_cloud(
-        self, user_id: int, prompt: str, context: str | None, rag_debug: dict | None
+        self,
+        user_id: int,
+        prompt: str,
+        context: str | None,
+        rag_debug: dict | None,
+        timing: dict[str, float] | None = None,
     ) -> dict:
+        timing = timing if timing is not None else {}
+
         if not self._cloud_enabled:
             return {
                 "text": CLOUD_DISABLED_MESSAGE,
@@ -128,6 +150,7 @@ class CascadeRouter:
                 "rag_debug": rag_debug,
                 "confidence": None,
                 "llm_usage": None,
+                "timing": timing,
             }
 
         if not await self._check_and_increment_rate_limit(user_id):
@@ -138,11 +161,14 @@ class CascadeRouter:
                 "rag_debug": None,
                 "confidence": None,
                 "llm_usage": None,
+                "timing": timing,
             }
 
+        cloud_start = time.monotonic()
         try:
             text, llm_usage = await self._cloud.generate_with_usage(prompt, context=context)
         except CloudUnavailableError as exc:
+            timing["cloud_seconds"] = round(time.monotonic() - cloud_start, 2)
             logger.warning(f"Cloud LLM unavailable for user {user_id}: {exc}")
             return {
                 "text": CLOUD_UNAVAILABLE_MESSAGE,
@@ -151,7 +177,9 @@ class CascadeRouter:
                 "rag_debug": rag_debug,
                 "confidence": None,
                 "llm_usage": None,
+                "timing": timing,
             }
+        timing["cloud_seconds"] = round(time.monotonic() - cloud_start, 2)
 
         return {
             "text": text,
@@ -163,6 +191,7 @@ class CascadeRouter:
             # it's already the trusted fallback tier of the cascade.
             "confidence": None,
             "llm_usage": llm_usage,
+            "timing": timing,
         }
 
     @staticmethod
