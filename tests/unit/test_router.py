@@ -3,7 +3,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fakeredis.aioredis import FakeRedis
 
-from app.core.router import RATE_LIMIT_MESSAGE, CascadeRouter
+from app.core.router import CLOUD_UNAVAILABLE_MESSAGE, RATE_LIMIT_MESSAGE, CascadeRouter
+from app.services.cloud_llm import CloudUnavailableError
 from app.services.local_llm import LocalLLMClient
 
 
@@ -14,13 +15,14 @@ def make_router(
     cloud_response: str = "облачный ответ",
     daily_limit: int = 50,
 ):
+    documents = rag_documents or []
     rag_engine = MagicMock()
     rag_engine.query.return_value = {
         "found": rag_found,
         "max_score": 0.9 if rag_found else 0.1,
-        "documents": rag_documents or [],
-        "metadatas": [],
-        "scores": [],
+        "documents": documents,
+        "metadatas": [{} for _ in documents],
+        "scores": [0.9 for _ in documents],
     }
 
     local_llm = MagicMock()
@@ -57,7 +59,15 @@ async def test_uses_rag_when_context_found_and_local_can_answer():
 
     result = await router.process_query(user_id=1, prompt="вопрос")
 
-    assert result == {"text": "ответ", "source": "rag", "context_used": True}
+    assert result == {
+        "text": "ответ",
+        "source": "rag",
+        "context_used": True,
+        "rag_debug": {
+            "max_score": 0.9,
+            "retrieved": [{"snippet": "контекст документа", "score": 0.9, "metadata": {}}],
+        },
+    }
     cloud_llm.generate.assert_not_called()
     local_llm.generate.assert_awaited_once()
     assert "контекст документа" in local_llm.generate.call_args.kwargs["system_prompt"]
@@ -69,7 +79,7 @@ async def test_falls_back_to_local_when_rag_not_found():
 
     result = await router.process_query(user_id=1, prompt="вопрос")
 
-    assert result == {"text": "ответ", "source": "local", "context_used": False}
+    assert result == {"text": "ответ", "source": "local", "context_used": False, "rag_debug": None}
     cloud_llm.generate.assert_not_called()
 
 
@@ -81,7 +91,12 @@ async def test_escalates_to_cloud_when_local_signals_need_cloud():
 
     result = await router.process_query(user_id=1, prompt="сложный вопрос")
 
-    assert result == {"text": "облачный ответ", "source": "cloud", "context_used": False}
+    assert result == {
+        "text": "облачный ответ",
+        "source": "cloud",
+        "context_used": False,
+        "rag_debug": None,
+    }
 
 
 @pytest.mark.asyncio
@@ -94,6 +109,7 @@ async def test_escalates_to_cloud_with_rag_context_when_local_cannot_answer():
 
     assert result["source"] == "cloud"
     assert result["context_used"] is True
+    assert result["rag_debug"]["max_score"] == 0.9
     cloud_llm.generate.assert_awaited_once_with("вопрос", context="контекст документа")
 
 
@@ -118,8 +134,30 @@ async def test_cloud_rate_limit_blocks_after_daily_limit():
     await router.process_query(user_id=42, prompt="q2")
     result = await router.process_query(user_id=42, prompt="q3")
 
-    assert result == {"text": RATE_LIMIT_MESSAGE, "source": "rate_limited", "context_used": False}
+    assert result == {
+        "text": RATE_LIMIT_MESSAGE,
+        "source": "rate_limited",
+        "context_used": False,
+        "rag_debug": None,
+    }
     assert cloud_llm.generate.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_cloud_unavailable_returns_friendly_message_without_raising():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False, local_response="[NEED_CLOUD]"
+    )
+    cloud_llm.generate = AsyncMock(side_effect=CloudUnavailableError("missing API key"))
+
+    result = await router.process_query(user_id=1, prompt="сложный вопрос")
+
+    assert result == {
+        "text": CLOUD_UNAVAILABLE_MESSAGE,
+        "source": "cloud_unavailable",
+        "context_used": False,
+        "rag_debug": None,
+    }
 
 
 @pytest.mark.asyncio

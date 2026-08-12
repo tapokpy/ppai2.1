@@ -5,10 +5,13 @@ from aiogram.types import Message
 
 from app.bot.fsm.calculators import ModuleCalculatorStates, PowerCalculatorStates
 from app.bot.keyboards.reply import BTN_MODULE_CALC, BTN_POWER_CALC
+from app.bot.keyboards.inline import calculator_export_actions
 from app.core.database import async_session_maker
+from app.models.sqlalchemy.message import Message as MessageModel
+from app.models.sqlalchemy.user import User
 from app.services.business_rules import BusinessRulesEngine, RuleViolation
-from app.services.calculators.modules import calculate_modules
-from app.services.calculators.power_cables import calculate_power_and_cables
+from app.services.calculators.modules import ModuleCalculationResult, calculate_modules
+from app.services.calculators.power_cables import PowerCalculationResult, calculate_power_and_cables
 
 router = Router(name="engineer")
 
@@ -21,6 +24,54 @@ def _format_violations(violations: list[RuleViolation]) -> str:
 
 def _parse_float(text: str) -> float:
     return float(text.replace(",", "."))
+
+
+def _module_result_to_structured_data(result: ModuleCalculationResult, pixel_pitch: float) -> dict:
+    item_name = f"Модуль дисплея, шаг пикселя {pixel_pitch} мм"
+    return {
+        "kind": "module_calculation",
+        "title": "Коммерческое предложение: модульный экран",
+        "items": [{"name": item_name, "quantity": result.total_modules, "unit": "шт", "price": ""}],
+        "rows": [{"name": item_name, "quantity": result.total_modules, "unit_price": 0}],
+    }
+
+
+def _power_result_to_structured_data(result: PowerCalculationResult) -> dict:
+    items = [
+        {"name": "Блок питания", "quantity": result.psu_count, "unit": "шт", "price": ""},
+        {
+            "name": f"Автоматический выключатель {result.breaker_rating_a} А",
+            "quantity": 1,
+            "unit": "шт",
+            "price": "",
+        },
+        {
+            "name": f"Кабель, сечение {result.cable_cross_section_mm2} мм²",
+            "quantity": 1,
+            "unit": "компл",
+            "price": "",
+        },
+    ]
+    rows = [{"name": item["name"], "quantity": item["quantity"], "unit_price": 0} for item in items]
+    return {"kind": "power_calculation", "title": "Смета: питание и кабельная продукция", "items": items, "rows": rows}
+
+
+async def _save_calculator_result(
+    message: Message, db_user: User, prompt: str, response_text: str, structured_data: dict
+) -> None:
+    async with async_session_maker() as session:
+        session.add(
+            MessageModel(
+                user_id=db_user.id,
+                telegram_message_id=message.message_id,
+                prompt=prompt,
+                response=response_text,
+                source="calculator",
+                context_used=False,
+                structured_data=structured_data,
+            )
+        )
+        await session.commit()
 
 
 @router.message(F.text == BTN_MODULE_CALC)
@@ -56,7 +107,7 @@ async def module_height_entered(message: Message, state: FSMContext) -> None:
 
 
 @router.message(StateFilter(ModuleCalculatorStates.waiting_pixel_pitch))
-async def module_pixel_pitch_entered(message: Message, state: FSMContext) -> None:
+async def module_pixel_pitch_entered(message: Message, state: FSMContext, db_user: User) -> None:
     try:
         pixel_pitch = _parse_float(message.text)
     except ValueError:
@@ -68,10 +119,9 @@ async def module_pixel_pitch_entered(message: Message, state: FSMContext) -> Non
 
     result = calculate_modules(width_m=data["width"], height_m=data["height"], pixel_pitch_mm=pixel_pitch)
 
+    calc_context = {"pixel_pitch": pixel_pitch, "width_m": data["width"], "height_m": data["height"]}
     async with async_session_maker() as session:
-        violations = await BusinessRulesEngine(session).validate(
-            {"pixel_pitch": pixel_pitch, "width_m": data["width"], "height_m": data["height"]}
-        )
+        violations = await BusinessRulesEngine(session).validate(calc_context)
 
     text = (
         f"Модулей: {result.total_modules} ({result.columns}×{result.rows})\n"
@@ -79,7 +129,14 @@ async def module_pixel_pitch_entered(message: Message, state: FSMContext) -> Non
         f"Площадь: {result.area_m2} м²"
     ) + _format_violations(violations)
 
-    await message.answer(text)
+    await _save_calculator_result(
+        message,
+        db_user,
+        prompt=f"Расчёт модулей: {data['width']}×{data['height']} м, шаг {pixel_pitch} мм",
+        response_text=text,
+        structured_data=_module_result_to_structured_data(result, pixel_pitch),
+    )
+    await message.answer(text, reply_markup=calculator_export_actions(message.message_id))
 
 
 @router.message(F.text == BTN_POWER_CALC)
@@ -102,7 +159,7 @@ async def power_module_count_entered(message: Message, state: FSMContext) -> Non
 
 
 @router.message(StateFilter(PowerCalculatorStates.waiting_module_power))
-async def power_module_power_entered(message: Message, state: FSMContext) -> None:
+async def power_module_power_entered(message: Message, state: FSMContext, db_user: User) -> None:
     try:
         module_power_w = _parse_float(message.text)
     except ValueError:
@@ -114,10 +171,9 @@ async def power_module_power_entered(message: Message, state: FSMContext) -> Non
 
     result = calculate_power_and_cables(module_count=data["module_count"], module_power_w=module_power_w)
 
+    calc_context = {"module_count": data["module_count"], "module_power_w": module_power_w}
     async with async_session_maker() as session:
-        violations = await BusinessRulesEngine(session).validate(
-            {"module_count": data["module_count"], "module_power_w": module_power_w}
-        )
+        violations = await BusinessRulesEngine(session).validate(calc_context)
 
     text = (
         f"Суммарная мощность (с запасом {int(result.power_reserve * 100)}%): {result.total_power_kw} кВт\n"
@@ -126,4 +182,11 @@ async def power_module_power_entered(message: Message, state: FSMContext) -> Non
         f"Количество БП: {result.psu_count}"
     ) + _format_violations(violations)
 
-    await message.answer(text)
+    await _save_calculator_result(
+        message,
+        db_user,
+        prompt=f"Расчёт питания: {data['module_count']} модулей по {module_power_w} Вт",
+        response_text=text,
+        structured_data=_power_result_to_structured_data(result),
+    )
+    await message.answer(text, reply_markup=calculator_export_actions(message.message_id))

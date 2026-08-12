@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
+from pathlib import Path
+from uuid import uuid4
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery, FSInputFile, Message
 from sqlalchemy import select
 
@@ -12,23 +14,32 @@ from app.models.sqlalchemy.activity_log import ActivityLog
 from app.models.sqlalchemy.message import Message as MessageModel
 from app.models.sqlalchemy.user import User
 from app.services.doc_generator import generate_docx, generate_xlsx
+from app.services.stt import Transcriber
 
 router = Router(name="chat")
 
+VOICE_TEMP_DIR = Path("data/temp")
 
-@router.message(F.text, ShouldRespondFilter())
-async def handle_text(message: Message, cascade_router: CascadeRouter, db_user: User) -> None:
-    result = await cascade_router.process_query(user_id=db_user.id, prompt=message.text)
+
+async def _process_and_reply(
+    message: Message,
+    cascade_router: CascadeRouter,
+    db_user: User,
+    prompt: str,
+    message_type: str = "text",
+) -> None:
+    result = await cascade_router.process_query(user_id=db_user.id, prompt=prompt)
 
     async with async_session_maker() as session:
         session.add(
             MessageModel(
                 user_id=db_user.id,
                 telegram_message_id=message.message_id,
-                prompt=message.text,
+                prompt=prompt,
                 response=result["text"],
                 source=result["source"],
                 context_used=result["context_used"],
+                rag_debug=result.get("rag_debug"),
             )
         )
         # Group messages are already logged for every message (mentioned or not)
@@ -38,13 +49,39 @@ async def handle_text(message: Message, cascade_router: CascadeRouter, db_user: 
                 ActivityLog(
                     user_id=db_user.id,
                     chat_id=message.chat.id,
-                    message_type="text",
-                    summary=message.text[:200],
+                    message_type=message_type,
+                    summary=prompt[:200],
                 )
             )
         await session.commit()
 
     await message.answer(result["text"], reply_markup=response_actions(message.message_id))
+
+
+@router.message(F.text, ShouldRespondFilter())
+async def handle_text(message: Message, cascade_router: CascadeRouter, db_user: User) -> None:
+    await _process_and_reply(message, cascade_router, db_user, message.text)
+
+
+@router.message(F.voice, ShouldRespondFilter())
+async def handle_voice(
+    message: Message, cascade_router: CascadeRouter, db_user: User, bot: Bot, transcriber: Transcriber
+) -> None:
+    file = await bot.get_file(message.voice.file_id)
+    VOICE_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    local_path = VOICE_TEMP_DIR / f"voice_{uuid4().hex}.ogg"
+
+    try:
+        await bot.download_file(file.file_path, destination=local_path)
+        transcript = await transcriber.transcribe(str(local_path))
+    finally:
+        local_path.unlink(missing_ok=True)
+
+    if not transcript.strip():
+        await message.answer("Не удалось распознать голосовое сообщение. Попробуйте ещё раз или напишите текстом.")
+        return
+
+    await _process_and_reply(message, cascade_router, db_user, transcript, message_type="voice")
 
 
 async def _get_stored_message(user_id: int, telegram_message_id: int) -> MessageModel | None:
@@ -67,13 +104,21 @@ async def export_docx_callback(callback: CallbackQuery, db_user: User) -> None:
         await callback.answer("Сообщение не найдено", show_alert=True)
         return
 
-    file_path = generate_docx(
-        {
+    structured = stored_message.structured_data
+    if structured:
+        proposal_data = {
+            "title": structured.get("title", "Коммерческое предложение"),
+            "items": structured.get("items", []),
+            "notes": stored_message.response,
+        }
+    else:
+        proposal_data = {
             "title": "Коммерческое предложение",
             "items": [{"name": stored_message.prompt, "quantity": 1, "unit": "шт", "price": ""}],
             "notes": stored_message.response,
         }
-    )
+
+    file_path = generate_docx(proposal_data)
 
     await callback.message.answer_document(FSInputFile(file_path))
     await callback.answer()
@@ -88,12 +133,19 @@ async def export_xlsx_callback(callback: CallbackQuery, db_user: User) -> None:
         await callback.answer("Сообщение не найдено", show_alert=True)
         return
 
-    file_path = generate_xlsx(
-        {
+    structured = stored_message.structured_data
+    if structured:
+        estimate_data = {
+            "title": structured.get("title", "Смета"),
+            "rows": structured.get("rows", []),
+        }
+    else:
+        estimate_data = {
             "title": "Смета",
             "rows": [{"name": stored_message.prompt, "quantity": 1, "unit_price": 0}],
         }
-    )
+
+    file_path = generate_xlsx(estimate_data)
 
     await callback.message.answer_document(FSInputFile(file_path))
     await callback.answer()
@@ -121,6 +173,7 @@ async def ask_cloud_callback(callback: CallbackQuery, db_user: User, cascade_rou
                 response=result["text"],
                 source=result["source"],
                 context_used=result["context_used"],
+                rag_debug=result.get("rag_debug"),
             )
         )
         await session.commit()

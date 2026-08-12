@@ -44,6 +44,7 @@ async def chat(
                 response=result["text"],
                 source=result["source"],
                 context_used=result["context_used"],
+                rag_debug=result.get("rag_debug"),
             )
         )
         await session.commit()

@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -16,4 +17,9 @@ class Message(Base):
     response: Mapped[str] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(20))
     context_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Structured line items (from a calculator result) for DOCX/XLSX export.
+    # NULL falls back to exporting the raw prompt/response as a single row.
+    structured_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # RAG retrieval details (max_score, retrieved chunks) captured when source == "rag".
+    rag_debug: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -12,10 +12,19 @@ class Settings(BaseSettings):
     OLLAMA_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "qwen2.5:7b"
 
+    # Speech-to-text (Faster-Whisper) for voice messages
+    WHISPER_MODEL_SIZE: str = "small"
+    WHISPER_DEVICE: str = "cpu"
+    WHISPER_COMPUTE_TYPE: str = "int8"
+    WHISPER_LANGUAGE: str = "ru"
+
     # Cloud LLM (Anthropic Claude)
     ANTHROPIC_API_KEY: str = ""
     CLOUD_MODEL_NAME: str = "claude-3-5-sonnet-20241022"
     CLOUD_DAILY_LIMIT_PER_USER: int = 50
+    # Optional HTTP proxy for Claude API calls only (e.g. http://gluetun:8888
+    # in production, to route just this traffic through a VPN). Empty = direct.
+    ANTHROPIC_PROXY_URL: str = ""
 
     # RAG
     RAG_SCORE_THRESHOLD: float = 0.65

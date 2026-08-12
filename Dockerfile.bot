@@ -1,0 +1,25 @@
+# Telegram bot service. Needs OCR system binaries (Ghostscript, Tesseract)
+# for the PDF ingestion pipeline (app/services/pdf_parser.py) that the API
+# service doesn't need, which is why it's a separate image from Dockerfile.api.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ghostscript \
+        tesseract-ocr \
+        tesseract-ocr-rus \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini .
+
+RUN mkdir -p data/chroma_db data/logs data/temp
+
+CMD ["python", "-m", "app.bot.main"]
