@@ -46,6 +46,18 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
+    # GPU passthrough (NVIDIA). Falls back to CPU automatically if no GPU is
+    # present at deploy time, but a CPU-only 7B model is dramatically slower
+    # (observed: 100+ seconds per response vs. low single digits on GPU) —
+    # verified live that this host has an RTX 3060 and the nvidia container
+    # runtime already installed, just never wired up here.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   api:
     build:
