@@ -1,30 +1,18 @@
 # Production stack for ppai.
 #
-# VPN split-tunneling: only outbound calls to the Anthropic (Claude) API are
-# routed through the `gluetun` container's HTTP proxy, which tunnels through
-# a self-hosted WireGuard server (e.g. deployed via AmneziaVPN, using its
-# plain "WireGuard" protocol — NOT the obfuscated "AmneziaWG" variant, which
-# Gluetun's standard WireGuard implementation cannot speak).
-# Telegram, Postgres, Redis and Ollama traffic all stay on the plain Docker
-# bridge network and never touch the VPN — this avoids Telegram flagging the
-# bot for using a datacenter/VPN exit IP, and keeps local DB/cache calls
-# fast. See the deployment notes for the full rationale and a request-by-
-# request walkthrough of the Claude path.
+# VPN split-tunneling is NOT enabled by default right now — the `gluetun`
+# service below is defined but not started unless you explicitly opt in
+# (see "VPN (optional, currently disabled)" further down). Without it, the
+# `api`/`bot` containers call the Anthropic API directly, same as running
+# them outside Docker. Telegram, Postgres, Redis and Ollama traffic never
+# goes through gluetun even when it's enabled — only Claude calls would.
 #
 # Usage:
 #   cp .env.example .env            # fill in secrets
 #   docker compose -f docker-compose.prod.yml up -d --build
 #
-# Required additional variables (put them in .env, do not commit them).
-# Get the WireGuard values from the config AmneziaVPN generated for this
-# device (Amnezia app -> your server -> "..." -> share/export config):
+# Required variables (put them in .env, do not commit it):
 #   POSTGRES_PASSWORD
-#   VPN_ENDPOINT_IP            = your server's IP (the [Peer] Endpoint host)
-#   VPN_ENDPOINT_PORT          = the [Peer] Endpoint port (default 51820)
-#   VPN_SERVER_PUBLIC_KEY      = [Peer] PublicKey in the exported config
-#   VPN_CLIENT_PRIVATE_KEY     = [Interface] PrivateKey in the exported config
-#   VPN_CLIENT_ADDRESS         = [Interface] Address in the exported config (e.g. 10.8.1.2/32)
-#   VPN_PRESHARED_KEY          = [Peer] PresharedKey, only if Amnezia set one (optional)
 
 services:
   postgres:
@@ -59,13 +47,80 @@ services:
       - ollama_data:/root/.ollama
     restart: unless-stopped
 
-  # VPN sidecar. Exposes an HTTP proxy on :8888 *inside* the Docker network
-  # only (no host port published) that tunnels through your own WireGuard
-  # server. Nothing is attached to it via network_mode — api/bot reach it as
-  # a regular proxy target (see ANTHROPIC_PROXY_URL below), so if the tunnel
-  # drops, only Claude calls fail; Telegram/DB/Redis keep working.
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    env_file: .env
+    environment:
+      POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-ppai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ppai}
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_URL: http://ollama:11434
+      CHROMA_PERSIST_DIR: /app/data/chroma_db
+    ports:
+      - "8000:8000"
+    volumes:
+      - app_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    env_file: .env
+    environment:
+      POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-ppai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ppai}
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_URL: http://ollama:11434
+      CHROMA_PERSIST_DIR: /app/data/chroma_db
+    volumes:
+      - app_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    environment:
+      WEBUI_AUTH: "false"
+      OPENAI_API_BASE_URL: http://api:8000/api/v1
+    volumes:
+      - open_webui_data:/app/backend/data
+    ports:
+      - "3000:8080"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    command: -H unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    ports:
+      - "9443:9443"
+    restart: unless-stopped
+
+  # --- VPN (optional, currently disabled) -----------------------------
+  # Not part of the default `docker compose up`. To use it once a
+  # Gluetun-compatible (plain WireGuard, not AmneziaWG) VPN endpoint is
+  # ready: start it with `docker compose --profile vpn up -d gluetun`,
+  # fill in the VPN_* variables below in .env, and add
+  # `ANTHROPIC_PROXY_URL: http://gluetun:8888` plus
+  # `depends_on: gluetun: condition: service_healthy` back onto the
+  # `api` and `bot` services above.
   gluetun:
     image: qmcgaw/gluetun:latest
+    profiles: ["vpn"]
     cap_add:
       - NET_ADMIN
     devices:
@@ -89,80 +144,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-    restart: unless-stopped
-
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
-    env_file: .env
-    environment:
-      # Only Claude calls go through gluetun's proxy; every other outbound
-      # call this service makes (Postgres, Redis, Ollama) bypasses it.
-      ANTHROPIC_PROXY_URL: http://gluetun:8888
-      POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-ppai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ppai}
-      REDIS_URL: redis://redis:6379/0
-      OLLAMA_URL: http://ollama:11434
-      CHROMA_PERSIST_DIR: /app/data/chroma_db
-    ports:
-      - "8000:8000"
-    volumes:
-      - app_data:/app/data
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      gluetun:
-        condition: service_healthy
-    restart: unless-stopped
-
-  bot:
-    build:
-      context: .
-      dockerfile: Dockerfile.bot
-    env_file: .env
-    environment:
-      ANTHROPIC_PROXY_URL: http://gluetun:8888
-      POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-ppai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ppai}
-      REDIS_URL: redis://redis:6379/0
-      OLLAMA_URL: http://ollama:11434
-      CHROMA_PERSIST_DIR: /app/data/chroma_db
-    volumes:
-      - app_data:/app/data
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      gluetun:
-        condition: service_healthy
-    restart: unless-stopped
-    # Telegram Bot API calls are NOT proxied through gluetun — the bot talks
-    # out directly on the plain bridge network so Telegram sees the real
-    # server IP, not the VPN exit IP (avoids the datacenter/VPN-IP ban risk).
-
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:main
-    environment:
-      WEBUI_AUTH: "false"
-      OPENAI_API_BASE_URL: http://api:8000/api/v1
-    volumes:
-      - open_webui_data:/app/backend/data
-    ports:
-      - "3000:8080"
-    depends_on:
-      - api
-    restart: unless-stopped
-
-  portainer:
-    image: portainer/portainer-ce:latest
-    command: -H unix:///var/run/docker.sock
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - portainer_data:/data
-    ports:
-      - "9443:9443"
     restart: unless-stopped
 
 volumes:
