@@ -1,7 +1,8 @@
 from unittest.mock import patch
 
-from app.core.dependencies import build_cascade_router, build_transcriber
+from app.core.dependencies import build_cascade_router, build_github_planning_client, build_transcriber
 from app.core.router import CascadeRouter
+from app.services.github_planning import GitHubPlanningClient
 from app.services.stt import Transcriber
 
 
@@ -26,3 +27,9 @@ def test_build_transcriber_returns_transcriber_instance():
     transcriber = build_transcriber()
 
     assert isinstance(transcriber, Transcriber)
+
+
+def test_build_github_planning_client_returns_client_instance():
+    client = build_github_planning_client()
+
+    assert isinstance(client, GitHubPlanningClient)

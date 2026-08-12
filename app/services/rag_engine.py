@@ -33,6 +33,19 @@ class RAGEngine:
         ids = ids or [str(uuid.uuid4()) for _ in texts]
         self._collection.add(documents=texts, metadatas=metadatas, ids=ids)
 
+    def upsert_documents(
+        self,
+        texts: list[str],
+        metadatas: list[dict] | None = None,
+        ids: list[str] | None = None,
+    ) -> None:
+        """Like add_documents, but overwrites existing entries with matching
+        ids instead of erroring. Used for idempotent re-ingestion (e.g. the
+        project's own docs on every bot startup) where callers pass stable,
+        deterministic ids rather than random ones."""
+        ids = ids or [str(uuid.uuid4()) for _ in texts]
+        self._collection.upsert(documents=texts, metadatas=metadatas, ids=ids)
+
     def query(self, query_text: str, top_k: int = 5) -> dict:
         results = self._collection.query(query_texts=[query_text], n_results=top_k)
 

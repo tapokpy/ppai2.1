@@ -46,3 +46,26 @@ def test_query_empty_collection_returns_not_found(rag_engine):
     assert result["found"] is False
     assert result["max_score"] == 0.0
     assert result["documents"] == []
+
+
+def test_upsert_documents_overwrites_existing_id(rag_engine):
+    rag_engine.upsert_documents(
+        texts=["Первая версия документа"], metadatas=[{"v": 1}], ids=["doc:1"]
+    )
+    rag_engine.upsert_documents(
+        texts=["Модуль P2.5 имеет шаг пикселя 2.5мм"], metadatas=[{"v": 2}], ids=["doc:1"]
+    )
+
+    result = rag_engine.query("Какой шаг пикселя у модуля P2.5?")
+
+    assert result["found"] is True
+    assert len(result["documents"]) == 1
+    assert result["metadatas"][0]["v"] == 2
+
+
+def test_upsert_documents_generates_ids_when_not_given(rag_engine):
+    rag_engine.upsert_documents(texts=["Документ без явного id"])
+
+    result = rag_engine.query("Документ без явного id")
+
+    assert result["found"] is True

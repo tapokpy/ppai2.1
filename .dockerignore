@@ -11,3 +11,10 @@ data/logs/*
 data/temp/*
 .env
 *.md
+!ARCHITECTURE.md
+!README.md
+!AUTONOMOUS_EXECUTION.md
+!DEVELOPMENT_TOOLS.md
+!OPEN_SOURCE_STRATEGY.md
+!INSTALL.md
+!DEPLOYMENT.md
