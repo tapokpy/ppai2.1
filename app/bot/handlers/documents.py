@@ -16,6 +16,7 @@ from app.models.sqlalchemy.document import Document
 from app.models.sqlalchemy.engineering_doc import EngineeringDoc
 from app.models.sqlalchemy.user import User
 from app.services import cad_parser
+from app.services.engineering_rag_ingest import index_engineering_doc
 from app.services.pdf_parser import chunk_text, extract_text
 from app.services.stock_import import StockTableError, parse_stock_table, upsert_stock_rows
 
@@ -56,7 +57,7 @@ async def handle_document(message: Message, bot: Bot, cascade_router: CascadeRou
 
     cad_ext = _cad_extension(document.file_name)
     if cad_ext:
-        await _handle_cad_upload(message, bot, cad_ext)
+        await _handle_cad_upload(message, bot, cad_ext, cascade_router)
         return
 
     stock_ext = _stock_table_extension(document.file_name)
@@ -121,7 +122,7 @@ def _format_cad_summary(project_name: str, extracted: cad_parser.ExtractedCadDat
     return "\n".join(lines)
 
 
-async def _handle_cad_upload(message: Message, bot: Bot, ext: str) -> None:
+async def _handle_cad_upload(message: Message, bot: Bot, ext: str, cascade_router: CascadeRouter) -> None:
     document = message.document
     file = await bot.get_file(document.file_id)
     DOCUMENT_TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -153,16 +154,17 @@ async def _handle_cad_upload(message: Message, bot: Bot, ext: str) -> None:
     project_name = Path(document.file_name).stem
 
     async with async_session_maker() as session:
-        session.add(
-            EngineeringDoc(
-                project_name=project_name,
-                file_path=str(stored_dxf),
-                doc_type=doc_type,
-                extracted_data=extracted.to_dict(),
-                is_generated=False,
-            )
+        doc = EngineeringDoc(
+            project_name=project_name,
+            file_path=str(stored_dxf),
+            doc_type=doc_type,
+            extracted_data=extracted.to_dict(),
+            is_generated=False,
         )
+        session.add(doc)
         await session.commit()
+        await session.refresh(doc)
+        index_engineering_doc(cascade_router.rag_engine, doc)
 
     await message.answer(_format_cad_summary(project_name, extracted))
     await message.answer_document(FSInputFile(str(rendered_pdf)))

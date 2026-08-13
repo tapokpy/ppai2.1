@@ -70,7 +70,7 @@ async def test_handle_format_choice_reports_expired_request():
     bot = AsyncMock()
     media_downloader = AsyncMock()
 
-    await handle_format_choice(callback, bot, media_downloader)
+    await handle_format_choice(callback, bot, media_downloader, MagicMock())
 
     callback.answer.assert_awaited_once_with(REQUEST_EXPIRED_REPLY, show_alert=True)
 
@@ -95,8 +95,9 @@ async def test_handle_format_choice_starts_background_download():
     media_downloader = AsyncMock()
     media_downloader.ensure_quota = AsyncMock()
     media_downloader.download = AsyncMock()
+    cascade_router = MagicMock()
 
-    await handle_format_choice(callback, bot, media_downloader)
+    await handle_format_choice(callback, bot, media_downloader, cascade_router)
     await asyncio.sleep(0.05)  # let the spawned background task run
 
     callback.answer.assert_awaited_once()

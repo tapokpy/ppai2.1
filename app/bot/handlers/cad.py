@@ -8,8 +8,10 @@ from app.bot.filters import CAD_TRIGGER_PATTERN, CadTriggerFilter, ShouldRespond
 from app.core.cad_command_parser import parse_cad_command
 from app.core.config import settings
 from app.core.database import async_session_maker
+from app.core.router import CascadeRouter
 from app.models.sqlalchemy.engineering_doc import EngineeringDoc
 from app.services.cad_parser import SUPPORTED_SHAPES, UnsupportedCadFormatError, generate_drawing
+from app.services.engineering_rag_ingest import index_engineering_doc
 from app.services.local_llm import LocalLLMClient
 
 router = Router(name="cad")
@@ -22,7 +24,7 @@ MISSING_DIMENSIONS_REPLY = "Укажите ширину и высоту в ми�
 
 
 @router.message(F.text, CadTriggerFilter(), ShouldRespondFilter())
-async def handle_cad_command(message: Message, local_llm: LocalLLMClient) -> None:
+async def handle_cad_command(message: Message, local_llm: LocalLLMClient, cascade_router: CascadeRouter) -> None:
     cleaned_text = CAD_TRIGGER_PATTERN.sub("", message.text).strip() or message.text
     request = await parse_cad_command(cleaned_text, local_llm)
 
@@ -45,16 +47,17 @@ async def handle_cad_command(message: Message, local_llm: LocalLLMClient) -> Non
         return
 
     async with async_session_maker() as session:
-        session.add(
-            EngineeringDoc(
-                project_name=project_name,
-                file_path=str(output_path),
-                doc_type="dxf",
-                extracted_data=None,
-                is_generated=True,
-            )
+        doc = EngineeringDoc(
+            project_name=project_name,
+            file_path=str(output_path),
+            doc_type="dxf",
+            extracted_data=None,
+            is_generated=True,
         )
+        session.add(doc)
         await session.commit()
+        await session.refresh(doc)
+        index_engineering_doc(cascade_router.rag_engine, doc)
 
     await message.answer(f"Чертёж «{project_name}» готов.")
     await message.answer_document(FSInputFile(str(output_path)))

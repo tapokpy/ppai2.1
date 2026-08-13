@@ -11,6 +11,7 @@ def _mock_session_maker():
     session = MagicMock()
     session.add = MagicMock()
     session.commit = AsyncMock()
+    session.refresh = AsyncMock()
 
     @asynccontextmanager
     async def session_maker():
@@ -27,13 +28,15 @@ async def test_generates_frame_and_sends_file(tmp_path):
     )
     message = SimpleNamespace(text="чертеж3 рамка 1000х500", answer=AsyncMock(), answer_document=AsyncMock())
     session_maker, session = _mock_session_maker()
+    cascade_router = MagicMock()
 
     with (
         patch("app.bot.handlers.cad.settings") as settings_mock,
         patch("app.bot.handlers.cad.async_session_maker", session_maker),
+        patch("app.bot.handlers.cad.index_engineering_doc") as index_mock,
     ):
         settings_mock.CAD_STORAGE_PATH = str(tmp_path)
-        await handle_cad_command(message, local_llm)
+        await handle_cad_command(message, local_llm, cascade_router)
 
     message.answer.assert_awaited_once()
     message.answer_document.assert_awaited_once()
@@ -41,6 +44,7 @@ async def test_generates_frame_and_sends_file(tmp_path):
     saved_doc = session.add.call_args.args[0]
     assert saved_doc.doc_type == "dxf"
     assert saved_doc.is_generated is True
+    index_mock.assert_called_once_with(cascade_router.rag_engine, saved_doc)
 
 
 @pytest.mark.asyncio
@@ -51,7 +55,7 @@ async def test_reports_unknown_shape():
     )
     message = SimpleNamespace(text="чертеж3 что-то непонятное", answer=AsyncMock(), answer_document=AsyncMock())
 
-    await handle_cad_command(message, local_llm)
+    await handle_cad_command(message, local_llm, MagicMock())
 
     message.answer.assert_awaited_once_with(UNKNOWN_SHAPE_REPLY)
     message.answer_document.assert_not_awaited()
@@ -65,7 +69,7 @@ async def test_asks_for_dimensions_when_missing():
     )
     message = SimpleNamespace(text="чертеж3 рамка", answer=AsyncMock(), answer_document=AsyncMock())
 
-    await handle_cad_command(message, local_llm)
+    await handle_cad_command(message, local_llm, MagicMock())
 
     message.answer.assert_awaited_once_with(MISSING_DIMENSIONS_REPLY)
     message.answer_document.assert_not_awaited()

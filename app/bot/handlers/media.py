@@ -8,6 +8,8 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from loguru import logger
 
 from app.bot.filters import MediaLinkFilter, ShouldRespondFilter
+from app.core.router import CascadeRouter
+from app.services.engineering_rag_ingest import index_showroom_media
 from app.services.media_downloader import (
     FormatOption,
     MediaDownloadError,
@@ -78,6 +80,7 @@ async def _run_download(
     pending: _PendingDownload,
     format_id: str,
     media_downloader: MediaDownloader,
+    cascade_router: CascadeRouter,
 ) -> None:
     """Runs off the callback handler so a slow download never risks the
     Telegram callback-query timeout. progress_hook fires from yt-dlp's own
@@ -116,13 +119,17 @@ async def _run_download(
         )
         return
 
+    index_showroom_media(cascade_router.rag_engine, media)
+
     await bot.edit_message_text(
         f"✅ «{media.title}» загружено и добавлено в библиотеку шоурума.", chat_id=chat_id, message_id=message_id
     )
 
 
 @router.callback_query(F.data.startswith("media_dl:"))
-async def handle_format_choice(callback: CallbackQuery, bot: Bot, media_downloader: MediaDownloader) -> None:
+async def handle_format_choice(
+    callback: CallbackQuery, bot: Bot, media_downloader: MediaDownloader, cascade_router: CascadeRouter
+) -> None:
     _, token, format_id = callback.data.split(":", 2)
     pending = _pending.pop(token, None)
 
@@ -134,5 +141,8 @@ async def handle_format_choice(callback: CallbackQuery, bot: Bot, media_download
     await callback.message.edit_text(f"⏳ Загружаю «{pending.title}»...")
 
     asyncio.create_task(
-        _run_download(bot, callback.message.chat.id, callback.message.message_id, pending, format_id, media_downloader)
+        _run_download(
+            bot, callback.message.chat.id, callback.message.message_id, pending, format_id, media_downloader,
+            cascade_router,
+        )
     )
