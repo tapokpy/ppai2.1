@@ -33,6 +33,17 @@ _HEADER_ALIASES = {
 }
 _REQUIRED_FIELDS = ("warehouse", "rack", "shelf", "cell", "item_name", "quantity")
 
+# The only categories app/services/bom_reconciliation.py's
+# REQUIRED_FIELDS_BY_TYPE actually knows how to match against a BOM —
+# anything else silently never reconciles, so free-text input is
+# normalized down to this set rather than stored verbatim.
+VALID_ITEM_TYPES = {"module", "psu", "card", "other"}
+
+
+def normalize_item_type(raw: str | None) -> str:
+    candidate = (raw or "").strip().lower()
+    return candidate if candidate in VALID_ITEM_TYPES else "other"
+
 
 class StockTableError(ValueError):
     pass
@@ -98,7 +109,7 @@ def parse_stock_table(rows: list[list[str]]) -> list[StockRow]:
                 cell=values.get("cell", ""),
                 item_name=values["item_name"],
                 quantity=quantity,
-                item_type=values.get("item_type") or "other",
+                item_type=normalize_item_type(values.get("item_type")),
                 unit=values.get("unit") or "шт",
             )
         )

@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.stock_import import StockTableError, parse_stock_table
+from app.services.stock_import import StockTableError, normalize_item_type, parse_stock_table
 
 
 def test_parses_rows_by_header_name_regardless_of_order():
@@ -70,3 +70,31 @@ def test_accepts_decimal_comma_quantity():
     ]
     parsed = parse_stock_table(rows)
     assert parsed[0].quantity == 10
+
+
+def test_unrecognized_item_type_falls_back_to_other():
+    rows = [
+        ["Склад", "Стеллаж", "Полка", "Ячейка", "Наименование", "Количество", "Тип"],
+        ["Осн", "А1", "1", "1", "Кабель", "5", "Модули"],  # Russian, not the exact "module" keyword
+    ]
+    parsed = parse_stock_table(rows)
+    assert parsed[0].item_type == "other"
+
+
+def test_known_item_type_is_lowercased():
+    rows = [
+        ["Склад", "Стеллаж", "Полка", "Ячейка", "Наименование", "Количество", "Тип"],
+        ["Осн", "А1", "1", "1", "Модуль", "5", "MODULE"],
+    ]
+    parsed = parse_stock_table(rows)
+    assert parsed[0].item_type == "module"
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("module", "module"), ("PSU", "psu"), (" card ", "card"), ("", "other"), (None, "other"), ("bogus", "other"),
+    ],
+)
+def test_normalize_item_type(raw, expected):
+    assert normalize_item_type(raw) == expected

@@ -20,7 +20,13 @@ from app.models.sqlalchemy.warehouse import Cell, Rack, Shelf, Warehouse
 from app.models.sqlalchemy.stock_item import StockItem
 from app.services.audit import log_action
 from app.services.sheets_import import SheetsImportError, fetch_public_sheet_rows
-from app.services.stock_import import StockRow, StockTableError, parse_stock_table, upsert_stock_rows
+from app.services.stock_import import (
+    StockRow,
+    StockTableError,
+    normalize_item_type,
+    parse_stock_table,
+    upsert_stock_rows,
+)
 
 router = Router(name="warehouse")
 
@@ -114,7 +120,10 @@ async def stock_add_item_name(message: Message, state: FSMContext) -> None:
 
 @router.message(StateFilter(StockAddStates.waiting_item_type))
 async def stock_add_item_type(message: Message, state: FSMContext) -> None:
-    await state.update_data(item_type=message.text.strip() or "other")
+    # Normalized (not stored verbatim) — bom_reconciliation.py only
+    # matches on exactly these categories; anything else would silently
+    # never reconcile against a calculated BOM.
+    await state.update_data(item_type=normalize_item_type(message.text))
     await state.set_state(StockAddStates.waiting_quantity)
     await message.answer("Количество:")
 
