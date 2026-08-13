@@ -9,6 +9,8 @@ from app.bot.handlers.admin import ACCESS_DENIED_MESSAGE, is_admin
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.engineering_doc import EngineeringDoc
 from app.models.sqlalchemy.project import Project
+from app.models.sqlalchemy.user import User
+from app.services.audit import log_action
 from app.services.bom_reconciliation import build_pick_list, check_bom_against_stock, format_deficits
 
 router = Router(name="projects")
@@ -22,7 +24,7 @@ NO_BOM_REPLY = "У проекта ещё нет расчёта BOM. Сначал
 
 
 @router.message(Command("project_new"))
-async def cmd_project_new(message: Message, command: CommandObject) -> None:
+async def cmd_project_new(message: Message, command: CommandObject, db_user: User) -> None:
     if not is_admin(message.from_user.id):
         await message.answer(ACCESS_DENIED_MESSAGE)
         return
@@ -43,6 +45,14 @@ async def cmd_project_new(message: Message, command: CommandObject) -> None:
         session.add(project)
         await session.commit()
         await session.refresh(project)
+        await log_action(
+            session,
+            user_id=db_user.id,
+            command_text=f"/project_new {command.args.strip()}",
+            module="projects",
+            decision="project_created",
+            detail={"project_id": project.id},
+        )
 
     await message.answer(f"Проект «{project.name}» создан, ID {project.id}.")
 
@@ -62,7 +72,7 @@ async def cmd_project_list(message: Message) -> None:
 
 
 @router.message(Command("project_attach"))
-async def cmd_project_attach(message: Message, command: CommandObject) -> None:
+async def cmd_project_attach(message: Message, command: CommandObject, db_user: User) -> None:
     if not is_admin(message.from_user.id):
         await message.answer(ACCESS_DENIED_MESSAGE)
         return
@@ -91,6 +101,13 @@ async def cmd_project_attach(message: Message, command: CommandObject) -> None:
 
         doc.project_id = project.id
         await session.commit()
+        await log_action(
+            session,
+            user_id=db_user.id,
+            command_text=f"/project_attach {project_id} {doc_id}",
+            module="projects",
+            decision="doc_attached",
+        )
 
     await message.answer(f"Чертёж «{doc.project_name}» привязан к проекту «{project.name}».")
 

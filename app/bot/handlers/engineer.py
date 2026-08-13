@@ -12,6 +12,7 @@ from app.core.database import async_session_maker
 from app.models.sqlalchemy.message import Message as MessageModel
 from app.models.sqlalchemy.project import Project
 from app.models.sqlalchemy.user import User
+from app.services.audit import log_action
 from app.services.bom_reconciliation import check_bom_against_stock, format_deficits
 from app.services.business_rules import BusinessRulesEngine, RuleViolation
 from app.services.calculators.led_bom import (
@@ -368,6 +369,14 @@ async def _finish_bom_calculation(message: Message, state: FSMContext, db_user: 
             if project is not None:
                 project.bom_data = asdict(result)
                 await session.commit()
+                await log_action(
+                    session,
+                    user_id=db_user.id,
+                    command_text=f"/project_bom {project_id} -> {data['screen_type']}",
+                    module="projects",
+                    decision="bom_saved",
+                    detail={"project_id": project.id, "unit_count": result.unit_count},
+                )
 
                 deficits = await check_bom_against_stock(session, project.bom_data)
                 text += f"\n\nСохранено в проект «{project.name}».\n\nОстатки на складе:\n{format_deficits(deficits)}"

@@ -10,6 +10,7 @@ from app.core.database import Base
 
 from app.models.sqlalchemy import (  # noqa: E402,F401
     activity_log,
+    audit_log,
     business_rule,
     document,
     engineering_doc,

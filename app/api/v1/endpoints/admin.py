@@ -1,16 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 
 from app.api.v1.endpoints.chat import get_cascade_router, get_current_user_id
 from app.core.config import settings
 from app.core.database import async_session_maker
 from app.core.router import CascadeRouter
+from app.models.sqlalchemy.audit_log import AuditLog
 from app.models.sqlalchemy.document import Document as DocumentModel
 from app.models.sqlalchemy.message import Message as MessageModel
 from app.models.sqlalchemy.rag_trace_event import RagTraceEvent
 from app.models.sqlalchemy.user import User
 from app.schemas.admin import (
     AnalyticsResponse,
+    AuditLogListResponse,
+    AuditLogSummary,
     ChunkResponse,
     DocumentDetailResponse,
     DocumentListResponse,
@@ -144,6 +147,41 @@ async def list_documents(source: str | None = None, q: str | None = None) -> Doc
                 created_at=d.created_at,
             )
             for d in rows
+        ],
+        total=total,
+    )
+
+
+@router.get("/audit", response_model=AuditLogListResponse, dependencies=[Depends(require_admin)])
+async def list_audit_log(
+    limit: int = 50, offset: int = 0, module: str | None = None, status_filter: str | None = None
+) -> AuditLogListResponse:
+    async with async_session_maker() as session:
+        query = select(AuditLog).order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        count_query = select(func.count()).select_from(AuditLog)
+        if module is not None:
+            query = query.where(AuditLog.module == module)
+            count_query = count_query.where(AuditLog.module == module)
+        if status_filter is not None:
+            query = query.where(AuditLog.status == status_filter)
+            count_query = count_query.where(AuditLog.status == status_filter)
+
+        total = (await session.execute(count_query)).scalar_one()
+        rows = (await session.execute(query.limit(limit).offset(offset))).scalars().all()
+
+    return AuditLogListResponse(
+        items=[
+            AuditLogSummary(
+                id=a.id,
+                created_at=a.created_at,
+                user_id=a.user_id,
+                module=a.module,
+                decision=a.decision,
+                status=a.status,
+                command_text=a.command_text,
+                detail=a.detail,
+            )
+            for a in rows
         ],
         total=total,
     )

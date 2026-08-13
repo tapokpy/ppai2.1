@@ -19,6 +19,7 @@ from app.bot.handlers.warehouse import (
     stock_add_shelf,
     stock_add_warehouse,
 )
+from app.models.sqlalchemy.user import User
 from app.services.stock_import import StockRow, upsert_stock_rows
 from app.core.database import async_session_maker
 from tests.integration.conftest import requires_postgres
@@ -37,6 +38,15 @@ def _new_state():
 
 def _message(text: str, user_id: int = NON_ADMIN_ID):
     return SimpleNamespace(text=text, from_user=SimpleNamespace(id=user_id), answer=AsyncMock())
+
+
+async def _seed_user(telegram_id: int) -> User:
+    async with async_session_maker() as session:
+        user = User(telegram_id=telegram_id, username="warehouse", is_approved=True)
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+    return user
 
 
 @pytest.mark.asyncio
@@ -83,6 +93,7 @@ async def test_stock_add_rejects_non_admin(clean_db):
 
 @pytest.mark.asyncio
 async def test_stock_add_full_flow_creates_stock_item(clean_db):
+    user = await _seed_user(ADMIN_ID)
     state = _new_state()
 
     with patch("app.bot.handlers.admin.settings") as settings_mock:
@@ -112,7 +123,7 @@ async def test_stock_add_full_flow_creates_stock_item(clean_db):
         await stock_add_item_type(message, state)
 
         message.text = "24"
-        await stock_add_quantity(message, state)
+        await stock_add_quantity(message, state, db_user=user)
 
     assert await state.get_state() is None
     final_text = message.answer.call_args.args[0]
@@ -127,7 +138,7 @@ async def test_stock_add_quantity_rejects_non_numeric(clean_db):
     await state.update_data(warehouse="О", rack="А1", shelf="1", cell="1", item_name="X", item_type="other")
 
     message = _message("много")
-    await stock_add_quantity(message, state)
+    await stock_add_quantity(message, state, db_user=None)
 
     assert await state.get_state() == StockAddStates.waiting_quantity.state
 
@@ -138,24 +149,26 @@ async def test_import_sheet_requires_admin(clean_db):
         settings_mock.admin_ids = [ADMIN_ID]
         message = _message("/import_sheet", user_id=NON_ADMIN_ID)
         command = SimpleNamespace(args="some-id")
-        await cmd_import_sheet(message, command)
+        await cmd_import_sheet(message, command, db_user=None)
 
     assert "администратор" in message.answer.call_args.args[0].lower()
 
 
 @pytest.mark.asyncio
 async def test_import_sheet_without_args_shows_usage(clean_db):
+    user = await _seed_user(ADMIN_ID)
     with patch("app.bot.handlers.admin.settings") as settings_mock:
         settings_mock.admin_ids = [ADMIN_ID]
         message = _message("/import_sheet", user_id=ADMIN_ID)
         command = SimpleNamespace(args=None)
-        await cmd_import_sheet(message, command)
+        await cmd_import_sheet(message, command, db_user=user)
 
     assert "Использование" in message.answer.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_import_sheet_imports_rows(clean_db):
+    user = await _seed_user(ADMIN_ID)
     fake_rows = [
         ["Склад", "Стеллаж", "Полка", "Ячейка", "Наименование", "Количество"],
         ["Осн", "А1", "1", "1", "Модуль", "8"],
@@ -167,6 +180,6 @@ async def test_import_sheet_imports_rows(clean_db):
         settings_mock.admin_ids = [ADMIN_ID]
         message = _message("/import_sheet", user_id=ADMIN_ID)
         command = SimpleNamespace(args="1AbCdEfGhIjKlMnOp")
-        await cmd_import_sheet(message, command)
+        await cmd_import_sheet(message, command, db_user=user)
 
     assert "Импортировано позиций: 1" in message.answer.call_args.args[0]

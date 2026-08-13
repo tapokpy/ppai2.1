@@ -137,3 +137,27 @@ export function listDocuments(params: { source?: string; q?: string } = {}) {
 export function getDocumentDetail(documentId: number) {
   return request<DocumentDetail>(`/admin/documents/${documentId}`);
 }
+
+export interface AuditLogSummary {
+  id: number;
+  created_at: string;
+  user_id: number;
+  module: string;
+  decision: string;
+  status: string;
+  command_text: string;
+  detail: Record<string, unknown> | null;
+}
+
+export interface AuditLogListResponse {
+  items: AuditLogSummary[];
+  total: number;
+}
+
+export function listAuditLog(params: { module?: string; statusFilter?: string } = {}) {
+  const search = new URLSearchParams();
+  if (params.module) search.set("module", params.module);
+  if (params.statusFilter) search.set("status_filter", params.statusFilter);
+  const query = search.toString();
+  return request<AuditLogListResponse>(`/admin/audit${query ? `?${query}` : ""}`);
+}

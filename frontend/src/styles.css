@@ -93,6 +93,7 @@ tr.clickable:hover {
 .badge.rag { color: var(--accent); border-color: var(--accent); }
 .badge.local { color: var(--good); border-color: var(--good); }
 .badge.cloud { color: var(--warn); border-color: var(--warn); }
+.badge.error { color: var(--bad); border-color: var(--bad); }
 
 .card {
   background: var(--panel);

@@ -15,8 +15,10 @@ from app.bot.handlers.admin import ACCESS_DENIED_MESSAGE, is_admin
 from app.bot.keyboards.reply import BTN_STOCK_SUMMARY
 from app.core.config import settings
 from app.core.database import async_session_maker
+from app.models.sqlalchemy.user import User
 from app.models.sqlalchemy.warehouse import Cell, Rack, Shelf, Warehouse
 from app.models.sqlalchemy.stock_item import StockItem
+from app.services.audit import log_action
 from app.services.sheets_import import SheetsImportError, fetch_public_sheet_rows
 from app.services.stock_import import StockRow, StockTableError, parse_stock_table, upsert_stock_rows
 
@@ -118,7 +120,7 @@ async def stock_add_item_type(message: Message, state: FSMContext) -> None:
 
 
 @router.message(StateFilter(StockAddStates.waiting_quantity))
-async def stock_add_quantity(message: Message, state: FSMContext) -> None:
+async def stock_add_quantity(message: Message, state: FSMContext, db_user: User) -> None:
     try:
         quantity = int(message.text.strip())
     except ValueError:
@@ -140,6 +142,13 @@ async def stock_add_quantity(message: Message, state: FSMContext) -> None:
 
     async with async_session_maker() as session:
         await upsert_stock_rows(session, [row])
+        await log_action(
+            session,
+            user_id=db_user.id,
+            command_text=f"остаток3: {row.item_name} x{quantity}",
+            module="warehouse",
+            decision="stock_added",
+        )
 
     await message.answer(
         f"Записано: «{row.item_name}» — {quantity} шт, {row.warehouse}/{row.rack}/{row.shelf}/{row.cell}."
@@ -163,7 +172,7 @@ async def handle_stock_summary(message: Message) -> None:
 
 
 @router.message(Command("import_sheet"))
-async def cmd_import_sheet(message: Message, command: CommandObject) -> None:
+async def cmd_import_sheet(message: Message, command: CommandObject, db_user: User) -> None:
     if not is_admin(message.from_user.id):
         await message.answer(ACCESS_DENIED_MESSAGE)
         return
@@ -181,5 +190,13 @@ async def cmd_import_sheet(message: Message, command: CommandObject) -> None:
 
     async with async_session_maker() as session:
         count = await upsert_stock_rows(session, stock_rows)
+        await log_action(
+            session,
+            user_id=db_user.id,
+            command_text=f"/import_sheet {command.args.strip()}",
+            module="warehouse",
+            decision="sheet_imported",
+            detail={"count": count},
+        )
 
     await message.answer(IMPORT_DONE_REPLY.format(count=count))

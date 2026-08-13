@@ -5,6 +5,7 @@ import MessagesList from "./pages/MessagesList";
 import TraceDetail from "./pages/TraceDetail";
 import DocumentsList from "./pages/DocumentsList";
 import DocumentDetail from "./pages/DocumentDetail";
+import AuditLogList from "./pages/AuditLogList";
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   if (!getToken()) {
@@ -46,6 +47,14 @@ export default function App() {
         element={
           <RequireAuth>
             <DocumentDetail />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/audit"
+        element={
+          <RequireAuth>
+            <AuditLogList />
           </RequireAuth>
         }
       />

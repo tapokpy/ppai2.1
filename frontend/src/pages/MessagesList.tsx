@@ -33,6 +33,7 @@ export default function MessagesList() {
             <option value="cloud">cloud</option>
           </select>{" "}
           <Link to="/documents">Документы</Link>{" "}
+          <Link to="/audit">Журнал действий</Link>{" "}
           <button
             className="secondary"
             onClick={() => {

@@ -7,6 +7,10 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.core.database import engine
 
+# _dispose_engine_pool_per_test lives in tests/conftest.py now (autouse
+# fixtures apply repo-wide, not just here) — nothing to import, it's
+# picked up automatically by pytest's conftest collection.
+
 
 def _tcp_reachable(url: str, default_port: int) -> bool:
     parsed = urlparse(url.replace("+asyncpg", ""))
@@ -29,17 +33,8 @@ requires_redis = pytest.mark.skipif(
 
 _TABLES_TO_RESET = (
     "messages, activity_logs, business_rules, reminders, users, showroom_media, todos, engineering_docs, "
-    "stock_items, cells, shelves, racks, warehouses, project_files, projects"
+    "stock_items, cells, shelves, racks, warehouses, project_files, projects, audit_logs"
 )
-
-
-@pytest.fixture(autouse=True)
-async def _dispose_engine_pool_per_test():
-    # pytest-asyncio spins up a fresh event loop per test; pooled asyncpg
-    # connections from a previous test's loop are unusable in the new one.
-    await engine.dispose()
-    yield
-    await engine.dispose()
 
 
 @pytest.fixture

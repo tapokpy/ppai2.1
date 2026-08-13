@@ -8,6 +8,7 @@ from app.bot.handlers.projects import cmd_project_attach, cmd_project_list, cmd_
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.engineering_doc import EngineeringDoc
 from app.models.sqlalchemy.project import Project
+from app.models.sqlalchemy.user import User
 from tests.integration.conftest import requires_postgres
 
 pytestmark = requires_postgres
@@ -20,22 +21,32 @@ def _message(user_id: int = NON_ADMIN_ID):
     return SimpleNamespace(from_user=SimpleNamespace(id=user_id), answer=AsyncMock())
 
 
+async def _seed_user(telegram_id: int) -> User:
+    async with async_session_maker() as session:
+        user = User(telegram_id=telegram_id, username="projects", is_approved=True)
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+    return user
+
+
 @pytest.mark.asyncio
 async def test_project_new_rejects_non_admin(clean_db):
     with patch("app.bot.handlers.admin.settings") as settings_mock:
         settings_mock.admin_ids = [ADMIN_ID]
         message = _message(NON_ADMIN_ID)
-        await cmd_project_new(message, SimpleNamespace(args="Объект 1"))
+        await cmd_project_new(message, SimpleNamespace(args="Объект 1"), db_user=None)
 
     assert "администратор" in message.answer.call_args.args[0].lower()
 
 
 @pytest.mark.asyncio
 async def test_project_new_creates_project_with_customer(clean_db):
+    user = await _seed_user(ADMIN_ID)
     with patch("app.bot.handlers.admin.settings") as settings_mock:
         settings_mock.admin_ids = [ADMIN_ID]
         message = _message(ADMIN_ID)
-        await cmd_project_new(message, SimpleNamespace(args="Объект 1; ООО Ромашка"))
+        await cmd_project_new(message, SimpleNamespace(args="Объект 1; ООО Ромашка"), db_user=user)
 
     async with async_session_maker() as session:
         projects = (await session.execute(select(Project))).scalars().all()
@@ -54,6 +65,7 @@ async def test_project_list_shows_no_projects_message(clean_db):
 
 @pytest.mark.asyncio
 async def test_project_attach_links_engineering_doc(clean_db):
+    user = await _seed_user(ADMIN_ID)
     async with async_session_maker() as session:
         project = Project(name="Объект 1")
         doc = EngineeringDoc(project_name="drawing_1", file_path="/x.dxf", doc_type="dxf", is_generated=True)
@@ -65,7 +77,7 @@ async def test_project_attach_links_engineering_doc(clean_db):
     with patch("app.bot.handlers.admin.settings") as settings_mock:
         settings_mock.admin_ids = [ADMIN_ID]
         message = _message(ADMIN_ID)
-        await cmd_project_attach(message, SimpleNamespace(args=f"{project.id} {doc.id}"))
+        await cmd_project_attach(message, SimpleNamespace(args=f"{project.id} {doc.id}"), db_user=user)
 
     async with async_session_maker() as session:
         refreshed_doc = await session.get(EngineeringDoc, doc.id)

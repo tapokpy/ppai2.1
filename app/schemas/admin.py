@@ -61,6 +61,22 @@ class DocumentListResponse(BaseModel):
     total: int
 
 
+class AuditLogSummary(BaseModel):
+    id: int
+    created_at: datetime
+    user_id: int
+    module: str
+    decision: str
+    status: str
+    command_text: str
+    detail: dict[str, Any] | None = None
+
+
+class AuditLogListResponse(BaseModel):
+    items: list[AuditLogSummary]
+    total: int
+
+
 class ChunkResponse(BaseModel):
     chunk_id: str
     text: str

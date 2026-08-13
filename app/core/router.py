@@ -6,7 +6,9 @@ from datetime import date
 from loguru import logger
 from redis.asyncio import Redis
 
+from app.core.database import async_session_maker
 from app.core.prompt_manager import CONFIDENCE_INSTRUCTION, detect_prompt_type, get_system_prompt
+from app.services.audit import log_action
 from app.services.cloud_llm import CloudLLMClient, CloudUnavailableError
 from app.services.local_llm import LocalLLMClient
 from app.services.rag_engine import RAGEngine
@@ -54,9 +56,35 @@ class CascadeRouter:
 
     async def process_query(self, user_id: int, prompt: str, use_cloud_override: bool = False) -> dict:
         start = time.monotonic()
-        result = await self._process_query(user_id, prompt, use_cloud_override)
+        try:
+            result = await self._process_query(user_id, prompt, use_cloud_override)
+        except Exception as exc:
+            await self._audit(user_id, prompt, decision="exception", status="error", detail={"error": str(exc)})
+            raise
+
         result["elapsed_seconds"] = round(time.monotonic() - start, 2)
+        await self._audit(user_id, prompt, decision=result["source"], status="success")
         return result
+
+    @staticmethod
+    async def _audit(user_id: int, prompt: str, decision: str, status: str, detail: dict | None = None) -> None:
+        # Single choke point for both Telegram and web chat (both call
+        # process_query) — see app/bot/handlers/chat.py and
+        # app/api/v1/endpoints/chat.py. Best-effort: an audit failure must
+        # never take down the actual chat response.
+        try:
+            async with async_session_maker() as session:
+                await log_action(
+                    session,
+                    user_id=user_id,
+                    command_text=prompt,
+                    module="cascade_router",
+                    decision=decision,
+                    status=status,
+                    detail=detail,
+                )
+        except Exception as exc:
+            logger.warning(f"Audit logging failed for user {user_id}: {exc}")
 
     async def _process_query(self, user_id: int, prompt: str, use_cloud_override: bool) -> dict:
         # Per-phase timings (rag/local/cloud, in seconds) so the Telegram
