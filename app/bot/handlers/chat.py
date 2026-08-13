@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery, FSInputFile, Message
+from loguru import logger
 from sqlalchemy import select
 
 from app.bot.filters import ShouldRespondFilter
@@ -21,6 +22,12 @@ from app.services.stt import Transcriber
 router = Router(name="chat")
 
 VOICE_TEMP_DIR = Path("data/temp")
+
+# Local inference can take anywhere from ~2s (warm GPU) to 2+ minutes (cold
+# start / CPU fallback) — this gives immediate feedback that the message
+# was received rather than leaving the user staring at silence, and is
+# removed once the real answer is ready.
+THINKING_PLACEHOLDER = "💭 Принял, думаю..."
 
 _CONFIDENCE_EMOJI = {"high": "✅", "medium": "⚠️", "low": "❓"}
 
@@ -140,6 +147,8 @@ async def _process_and_reply(
     prompt: str,
     message_type: str = "text",
 ) -> None:
+    placeholder = await message.answer(THINKING_PLACEHOLDER)
+
     result = await cascade_router.process_query(user_id=db_user.id, prompt=prompt)
 
     async with async_session_maker() as session:
@@ -157,6 +166,13 @@ async def _process_and_reply(
                 )
             )
         await session.commit()
+
+    try:
+        await placeholder.delete()
+    except Exception as exc:
+        # Not fatal — e.g. the chat doesn't allow the bot to delete messages.
+        # The real answer still gets sent either way.
+        logger.warning(f"Failed to delete thinking placeholder: {exc}")
 
     await message.answer(_format_reply(result, db_user))
 

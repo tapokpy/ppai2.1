@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy import select
 
-from app.bot.handlers.chat import handle_text, handle_voice
+from app.bot.handlers.chat import THINKING_PLACEHOLDER, handle_text, handle_voice
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.activity_log import ActivityLog
 from app.models.sqlalchemy.message import Message as MessageModel
@@ -12,6 +12,42 @@ from app.models.sqlalchemy.user import User
 from tests.integration.conftest import requires_postgres
 
 pytestmark = requires_postgres
+
+
+def _make_message(**kwargs) -> SimpleNamespace:
+    """`.answer(...)` returns an object with an awaitable `.delete()`, since
+    _process_and_reply now sends a thinking-placeholder message first and
+    deletes it once the real answer is ready."""
+    placeholder = SimpleNamespace(delete=AsyncMock())
+    return SimpleNamespace(answer=AsyncMock(return_value=placeholder), **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_handle_text_shows_and_removes_thinking_placeholder(clean_db):
+    async with async_session_maker() as session:
+        user = User(telegram_id=563, username="engineer7")
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+    cascade_router = AsyncMock()
+    cascade_router.process_query.return_value = {
+        "text": "Ответ бота",
+        "source": "local",
+        "context_used": False,
+    }
+
+    message = _make_message(text="Привет", message_id=17, chat=SimpleNamespace(id=1007, type="private"))
+
+    with patch("app.bot.handlers.admin.settings") as settings_mock:
+        settings_mock.admin_ids = []
+        await handle_text(message, cascade_router, user)
+
+    assert message.answer.await_count == 2
+    assert message.answer.await_args_list[0].args[0] == THINKING_PLACEHOLDER
+    placeholder = message.answer.return_value
+    placeholder.delete.assert_awaited_once()
+    assert message.answer.await_args_list[1].args[0] == "Ответ бота"
 
 
 @pytest.mark.asyncio
@@ -30,19 +66,13 @@ async def test_handle_text_saves_history_and_replies(clean_db):
         "elapsed_seconds": 1.23,
     }
 
-    message = SimpleNamespace(
-        text="Привет",
-        message_id=7,
-        chat=SimpleNamespace(id=999, type="private"),
-        answer=AsyncMock(),
-    )
+    message = _make_message(text="Привет", message_id=7, chat=SimpleNamespace(id=999, type="private"))
 
     with patch("app.bot.handlers.admin.settings") as settings_mock:
         settings_mock.admin_ids = []
         await handle_text(message, cascade_router, user)
 
     cascade_router.process_query.assert_awaited_once_with(user_id=user.id, prompt="Привет")
-    message.answer.assert_awaited_once()
     # Every user (not just admins) sees the timing line before the answer.
     # No keyboard is attached (removed per explicit user request).
     assert message.answer.call_args.args[0] == "⏱ 1.23с\n\nОтвет бота"
@@ -78,11 +108,8 @@ async def test_handle_text_shows_confidence_emoji_alongside_timing(clean_db):
         "confidence": "medium",
     }
 
-    message = SimpleNamespace(
-        text="какое сечение кабеля?",
-        message_id=14,
-        chat=SimpleNamespace(id=1004, type="private"),
-        answer=AsyncMock(),
+    message = _make_message(
+        text="какое сечение кабеля?", message_id=14, chat=SimpleNamespace(id=1004, type="private")
     )
 
     with patch("app.bot.handlers.admin.settings") as settings_mock:
@@ -111,11 +138,8 @@ async def test_handle_text_shows_extra_debug_line_to_admin(clean_db):
         "llm_usage": {"prompt_tokens": 120, "completion_tokens": 45},
     }
 
-    message = SimpleNamespace(
-        text="какое сечение кабеля?",
-        message_id=15,
-        chat=SimpleNamespace(id=1005, type="private"),
-        answer=AsyncMock(),
+    message = _make_message(
+        text="какое сечение кабеля?", message_id=15, chat=SimpleNamespace(id=1005, type="private")
     )
 
     with patch("app.bot.handlers.admin.settings") as settings_mock:
@@ -151,11 +175,8 @@ async def test_handle_text_shows_timing_breakdown_to_admin(clean_db):
         "timing": {"rag_seconds": 0.02, "local_seconds": 74.3},
     }
 
-    message = SimpleNamespace(
-        text="какое сечение кабеля?",
-        message_id=16,
-        chat=SimpleNamespace(id=1006, type="private"),
-        answer=AsyncMock(),
+    message = _make_message(
+        text="какое сечение кабеля?", message_id=16, chat=SimpleNamespace(id=1006, type="private")
     )
 
     with patch("app.bot.handlers.admin.settings") as settings_mock:
@@ -185,12 +206,7 @@ async def test_handle_text_replies_without_prefix_when_no_metrics_present(clean_
         "context_used": False,
     }
 
-    message = SimpleNamespace(
-        text="Привет",
-        message_id=13,
-        chat=SimpleNamespace(id=1003, type="private"),
-        answer=AsyncMock(),
-    )
+    message = _make_message(text="Привет", message_id=13, chat=SimpleNamespace(id=1003, type="private"))
 
     with patch("app.bot.handlers.admin.settings") as settings_mock:
         settings_mock.admin_ids = []
@@ -214,11 +230,8 @@ async def test_handle_text_skips_activity_log_for_group_chat(clean_db):
         "context_used": False,
     }
 
-    message = SimpleNamespace(
-        text="@bot Привет",
-        message_id=8,
-        chat=SimpleNamespace(id=1000, type="supergroup"),
-        answer=AsyncMock(),
+    message = _make_message(
+        text="@bot Привет", message_id=8, chat=SimpleNamespace(id=1000, type="supergroup")
     )
 
     with patch("app.bot.handlers.admin.settings") as settings_mock:
@@ -255,11 +268,8 @@ async def test_handle_voice_transcribes_and_replies(clean_db):
     )
     transcriber = SimpleNamespace(transcribe=AsyncMock(return_value="Расскажи про шаг пикселя"))
 
-    message = SimpleNamespace(
-        voice=SimpleNamespace(file_id="abc"),
-        message_id=9,
-        chat=SimpleNamespace(id=1001, type="private"),
-        answer=AsyncMock(),
+    message = _make_message(
+        voice=SimpleNamespace(file_id="abc"), message_id=9, chat=SimpleNamespace(id=1001, type="private")
     )
 
     with patch("app.bot.handlers.admin.settings") as settings_mock:
@@ -271,7 +281,6 @@ async def test_handle_voice_transcribes_and_replies(clean_db):
     cascade_router.process_query.assert_awaited_once_with(
         user_id=user.id, prompt="Расскажи про шаг пикселя"
     )
-    message.answer.assert_awaited_once()
     assert message.answer.call_args.args[0] == "⏱ 3.5с\n\nОтвет бота"
 
     async with async_session_maker() as session:
@@ -299,16 +308,15 @@ async def test_handle_voice_reports_when_transcription_empty(clean_db):
     )
     transcriber = SimpleNamespace(transcribe=AsyncMock(return_value=""))
 
-    message = SimpleNamespace(
-        voice=SimpleNamespace(file_id="def"),
-        message_id=10,
-        chat=SimpleNamespace(id=1002, type="private"),
-        answer=AsyncMock(),
+    message = _make_message(
+        voice=SimpleNamespace(file_id="def"), message_id=10, chat=SimpleNamespace(id=1002, type="private")
     )
 
     await handle_voice(message, cascade_router, user, bot, transcriber)
 
     cascade_router.process_query.assert_not_awaited()
+    # No placeholder for this path — it returns before calling
+    # _process_and_reply at all (nothing to transcribe).
     message.answer.assert_awaited_once()
     assert "не удалось распознать" in message.answer.call_args.args[0].lower()
 
