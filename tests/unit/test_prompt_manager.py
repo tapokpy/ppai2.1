@@ -1,3 +1,6 @@
+from unittest.mock import patch
+
+from app.core.capabilities import load_capabilities_summary
 from app.core.prompt_manager import PromptType, detect_prompt_type, get_system_prompt
 
 
@@ -28,3 +31,29 @@ def test_get_system_prompt_returns_type_specific_text():
 
 def test_get_system_prompt_falls_back_to_default_for_unknown_type():
     assert get_system_prompt("nonsense") == get_system_prompt(PromptType.DEFAULT)
+
+
+def test_get_system_prompt_appends_capabilities_when_configured(tmp_path):
+    load_capabilities_summary.cache_clear()
+    config = tmp_path / "capabilities.yaml"
+    config.write_text(
+        "capabilities:\n  - name: Тест\n    description: Проверка подключения.\n", encoding="utf-8"
+    )
+
+    with patch("app.core.prompt_manager.settings") as settings_mock:
+        settings_mock.CAPABILITIES_PATH = str(config)
+        prompt = get_system_prompt(PromptType.DEFAULT)
+
+    assert "Тест: Проверка подключения." in prompt
+    load_capabilities_summary.cache_clear()
+
+
+def test_get_system_prompt_omits_capabilities_block_when_file_missing(tmp_path):
+    load_capabilities_summary.cache_clear()
+
+    with patch("app.core.prompt_manager.settings") as settings_mock:
+        settings_mock.CAPABILITIES_PATH = str(tmp_path / "nope.yaml")
+        prompt = get_system_prompt(PromptType.DEFAULT)
+
+    assert "Возможности системы" not in prompt
+    load_capabilities_summary.cache_clear()

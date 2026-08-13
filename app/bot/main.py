@@ -6,7 +6,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from loguru import logger
 
-from app.bot.handlers import admin, chat, documents, engineer, group_chat, media, showroom, start, todo
+from app.bot.handlers import admin, cad, chat, documents, engineer, group_chat, media, showroom, start, todo
 from app.bot.handlers.group_chat import send_reminder_message
 from app.bot.middlewares.auth import AuthMiddleware
 from app.bot.middlewares.group_activity import GroupActivityMiddleware
@@ -54,6 +54,7 @@ def build_dispatcher() -> Dispatcher:
     dp.include_router(todo.router)
     dp.include_router(media.router)
     dp.include_router(showroom.router)
+    dp.include_router(cad.router)
     dp.include_router(chat.router)
     return dp
 

@@ -1,5 +1,8 @@
 from enum import Enum
 
+from app.core.capabilities import load_capabilities_summary
+from app.core.config import settings
+
 CALCULATOR_KEYWORDS = (
     "рассчитай",
     "посчитай",
@@ -68,7 +71,11 @@ CONFIDENCE_INSTRUCTION = (
 
 
 def get_system_prompt(prompt_type: PromptType = PromptType.DEFAULT) -> str:
-    return SYSTEM_PROMPTS.get(prompt_type, SYSTEM_PROMPTS[PromptType.DEFAULT])
+    base = SYSTEM_PROMPTS.get(prompt_type, SYSTEM_PROMPTS[PromptType.DEFAULT])
+    capabilities = load_capabilities_summary(settings.CAPABILITIES_PATH)
+    if capabilities:
+        return f"{base}\n\n{capabilities}"
+    return base
 
 
 def detect_prompt_type(query: str) -> PromptType:

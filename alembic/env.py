@@ -12,6 +12,7 @@ from app.models.sqlalchemy import (  # noqa: E402,F401
     activity_log,
     business_rule,
     document,
+    engineering_doc,
     message,
     rag_trace_event,
     reminder,

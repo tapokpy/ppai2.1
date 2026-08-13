@@ -85,6 +85,17 @@ class Settings(BaseSettings):
     RESOLUME_OSC_PORT: int = 7000
     RESOLUME_REST_BASE_URL: str = "http://host.docker.internal:8080/api/v1"
 
+    # CAD-Engine (drawing analysis/generation) — outputs live in a
+    # subfolder of the same media library (D:/Pappai_Media/Draw on the
+    # host, MEDIA_STORAGE_PATH/Draw in-container).
+    CAD_STORAGE_PATH: str = "./data/media/Draw"
+    # Path to the ODA File Converter executable, IF installed — the
+    # standard free (non-Python) tool for .dwg -> .dxf conversion, since
+    # ezdxf itself only reads .dxf natively. Empty = .dwg uploads get a
+    # clear "install the converter" message instead of silently failing.
+    ODA_FILE_CONVERTER_PATH: str = ""
+    CAPABILITIES_PATH: str = "./capabilities.yaml"
+
     @property
     def admin_ids(self) -> list[int]:
         return [int(x) for x in self.ADMIN_IDS.split(",") if x.strip()]
