@@ -2,6 +2,7 @@ from enum import Enum
 
 from app.core.capabilities import load_capabilities_summary
 from app.core.config import settings
+from app.core.led_golden_standard import GOLDEN_STANDARD_TEXT
 
 CALCULATOR_KEYWORDS = (
     "рассчитай",
@@ -71,11 +72,18 @@ CONFIDENCE_INSTRUCTION = (
 
 
 def get_system_prompt(prompt_type: PromptType = PromptType.DEFAULT) -> str:
-    base = SYSTEM_PROMPTS.get(prompt_type, SYSTEM_PROMPTS[PromptType.DEFAULT])
+    parts = [SYSTEM_PROMPTS.get(prompt_type, SYSTEM_PROMPTS[PromptType.DEFAULT])]
+
     capabilities = load_capabilities_summary(settings.CAPABILITIES_PATH)
     if capabilities:
-        return f"{base}\n\n{capabilities}"
-    return base
+        parts.append(capabilities)
+
+    # Unconditional (not just for PromptType.CALCULATOR) — these rules must
+    # hold for any answer that touches equipment/BOM, including casual
+    # sales/default-prompt conversation, not just explicit calculator flows.
+    parts.append(GOLDEN_STANDARD_TEXT)
+
+    return "\n\n".join(parts)
 
 
 def detect_prompt_type(query: str) -> PromptType:

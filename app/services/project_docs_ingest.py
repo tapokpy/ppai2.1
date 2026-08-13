@@ -22,6 +22,7 @@ PROJECT_DOC_FILENAMES = [
     "OPEN_SOURCE_STRATEGY.md",
     "INSTALL.md",
     "DEPLOYMENT.md",
+    "LED_Master_Knowledge_Base.md",
 ]
 
 

@@ -24,7 +24,7 @@ COPY alembic.ini .
 # Root docs, ingested into RAG at startup (app/services/project_docs_ingest.py)
 # so chat and the todo-capture parser are grounded in the real project docs.
 COPY ARCHITECTURE.md README.md AUTONOMOUS_EXECUTION.md DEVELOPMENT_TOOLS.md \
-     OPEN_SOURCE_STRATEGY.md INSTALL.md DEPLOYMENT.md ./
+     OPEN_SOURCE_STRATEGY.md INSTALL.md DEPLOYMENT.md LED_Master_Knowledge_Base.md ./
 # Baseline fallback if the bind mount from docker-compose.prod.yml isn't
 # present (e.g. running the image standalone) — real config is meant to be
 # edited on the host and bind-mounted over this.

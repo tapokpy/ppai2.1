@@ -57,3 +57,13 @@ def test_get_system_prompt_omits_capabilities_block_when_file_missing(tmp_path):
 
     assert "Возможности системы" not in prompt
     load_capabilities_summary.cache_clear()
+
+
+def test_get_system_prompt_always_includes_golden_standard():
+    # Unconditional for every prompt type, not just PromptType.CALCULATOR —
+    # equipment/BOM answers can come up in sales or default chat too.
+    for prompt_type in PromptType:
+        prompt = get_system_prompt(prompt_type)
+        assert "NovaStar" in prompt
+        assert "Подрезка модулей ЗАПРЕЩЕНА" in prompt
+        assert "1.3" in prompt
