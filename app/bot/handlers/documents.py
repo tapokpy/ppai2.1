@@ -127,16 +127,29 @@ async def _handle_cad_upload(message: Message, bot: Bot, ext: str, cascade_route
     file = await bot.get_file(document.file_id)
     DOCUMENT_TEMP_DIR.mkdir(parents=True, exist_ok=True)
     local_path = DOCUMENT_TEMP_DIR / f"cad_{uuid4().hex}{ext}"
+    await bot.download_file(file.file_path, destination=local_path)
 
+    project_name = Path(document.file_name).stem
+    await message.answer(f"⏳ Чертёж «{project_name}» принят, разбираю и рендерю...")
+
+    # Backgrounded (see media.py's _run_download for the same
+    # asyncio.create_task pattern) so parsing + rendering a large/complex
+    # drawing never risks the aiogram update-processing timeout, and the
+    # user gets an immediate ack instead of a silently stalled chat while
+    # ezdxf/matplotlib do their (potentially slow) work off-thread.
+    asyncio.create_task(_process_cad_upload(message, local_path, project_name, cascade_router))
+
+
+async def _process_cad_upload(
+    message: Message, local_path: Path, project_name: str, cascade_router: CascadeRouter
+) -> None:
     try:
-        await bot.download_file(file.file_path, destination=local_path)
-
         try:
             doc, doc_type = await asyncio.to_thread(
                 cad_parser.open_drawing, local_path, settings.ODA_FILE_CONVERTER_PATH
             )
         except (cad_parser.UnsupportedCadFormatError, cad_parser.CadConversionError, cad_parser.CadParseError) as exc:
-            logger.warning(f"CAD upload failed for {document.file_name}: {exc}")
+            logger.warning(f"CAD upload failed for {project_name}: {exc}")
             await message.answer(str(exc))
             return
 
@@ -151,20 +164,18 @@ async def _handle_cad_upload(message: Message, bot: Bot, ext: str, cascade_route
     finally:
         local_path.unlink(missing_ok=True)
 
-    project_name = Path(document.file_name).stem
-
     async with async_session_maker() as session:
-        doc = EngineeringDoc(
+        engineering_doc = EngineeringDoc(
             project_name=project_name,
             file_path=str(stored_dxf),
             doc_type=doc_type,
             extracted_data=extracted.to_dict(),
             is_generated=False,
         )
-        session.add(doc)
+        session.add(engineering_doc)
         await session.commit()
-        await session.refresh(doc)
-        index_engineering_doc(cascade_router.rag_engine, doc)
+        await session.refresh(engineering_doc)
+        index_engineering_doc(cascade_router.rag_engine, engineering_doc)
 
     await message.answer(_format_cad_summary(project_name, extracted))
     await message.answer_document(FSInputFile(str(rendered_pdf)))
