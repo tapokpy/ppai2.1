@@ -4,7 +4,6 @@ from app.core.config import settings
 from app.core.router import CascadeRouter
 from app.services.cloud_llm import CloudLLMClient
 from app.services.embeddings import default_embedding_function
-from app.services.github_planning import GitHubPlanningClient
 from app.services.local_llm import LocalLLMClient
 from app.services.rag_engine import RAGEngine
 from app.services.stt import Transcriber
@@ -16,15 +15,6 @@ def build_transcriber() -> Transcriber:
         device=settings.WHISPER_DEVICE,
         compute_type=settings.WHISPER_COMPUTE_TYPE,
         language=settings.WHISPER_LANGUAGE,
-    )
-
-
-def build_github_planning_client() -> GitHubPlanningClient:
-    return GitHubPlanningClient(
-        token=settings.GITHUB_TOKEN,
-        repo=settings.GITHUB_REPO,
-        file_path=settings.GITHUB_PLANNING_FILE_PATH,
-        branch=settings.GITHUB_PLANNING_BRANCH,
     )
 
 

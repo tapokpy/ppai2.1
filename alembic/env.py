@@ -15,6 +15,7 @@ from app.models.sqlalchemy import (  # noqa: E402,F401
     message,
     rag_trace_event,
     reminder,
+    todo,
     user,
 )
 

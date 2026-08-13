@@ -70,12 +70,6 @@ class Settings(BaseSettings):
     API_INTERNAL_BASE_URL: str = "http://api:8000/api/v1"
     WEB_DASHBOARD_URL: str = "http://localhost:8080"
 
-    # GitHub Planning (Loki: in-chat "todo3"/"план3" capture -> PLANNING.md)
-    GITHUB_TOKEN: str = ""
-    GITHUB_REPO: str = "tapokpy/ppai"
-    GITHUB_PLANNING_FILE_PATH: str = "PLANNING.md"
-    GITHUB_PLANNING_BRANCH: str = "claude/review-files-plan-rn4l2a"
-
     @property
     def admin_ids(self) -> list[int]:
         return [int(x) for x in self.ADMIN_IDS.split(",") if x.strip()]

@@ -11,7 +11,7 @@ from app.bot.handlers.group_chat import send_reminder_message
 from app.bot.middlewares.auth import AuthMiddleware
 from app.bot.middlewares.group_activity import GroupActivityMiddleware
 from app.core.config import settings
-from app.core.dependencies import build_cascade_router, build_github_planning_client, build_transcriber
+from app.core.dependencies import build_cascade_router, build_transcriber
 from app.core.scheduler import ReminderScheduler
 from app.services.project_docs_ingest import sync_project_docs
 
@@ -55,7 +55,6 @@ async def main() -> None:
     dp = build_dispatcher()
     cascade_router = build_cascade_router()
     transcriber = build_transcriber()
-    github_planning_client = build_github_planning_client()
 
     await sync_project_docs(cascade_router.rag_engine)
 
@@ -71,7 +70,6 @@ async def main() -> None:
         local_llm=cascade_router.local_llm,
         scheduler=scheduler,
         transcriber=transcriber,
-        github_planning_client=github_planning_client,
     )
 
 
