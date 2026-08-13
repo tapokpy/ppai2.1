@@ -10,6 +10,7 @@ from app.bot.handlers.documents import handle_document
 def _make_message(file_name: str, mime_type: str | None = "application/pdf"):
     return SimpleNamespace(
         document=SimpleNamespace(file_id="file123", file_name=file_name, mime_type=mime_type),
+        caption=None,
         answer=AsyncMock(),
     )
 

@@ -54,14 +54,6 @@ class StockAddTriggerFilter(BaseFilter):
         return bool(message.text) and bool(STOCK_ADD_TRIGGER_PATTERN.search(message.text))
 
 
-PROJECT_TRIGGER_PATTERN = re.compile(r"\b(?:проект|project)3\b", re.IGNORECASE)
-
-
-class ProjectTriggerFilter(BaseFilter):
-    async def __call__(self, message: Message) -> bool:
-        return bool(message.text) and bool(PROJECT_TRIGGER_PATTERN.search(message.text))
-
-
 URL_PATTERN = re.compile(r"^\s*https?://\S+\s*$", re.IGNORECASE)
 
 

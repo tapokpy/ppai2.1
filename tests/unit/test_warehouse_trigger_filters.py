@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.bot.filters import ProjectTriggerFilter, StockAddTriggerFilter, WarehouseTriggerFilter
+from app.bot.filters import StockAddTriggerFilter, WarehouseTriggerFilter
 
 
 @pytest.mark.asyncio
@@ -26,14 +26,3 @@ async def test_stock_add_trigger_matches(text):
 @pytest.mark.asyncio
 async def test_stock_add_trigger_does_not_match_plain_text():
     assert await StockAddTriggerFilter()(SimpleNamespace(text="остаток на складе")) is False
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("text", ["проект3", "project3 Объект 1"])
-async def test_project_trigger_matches(text):
-    assert await ProjectTriggerFilter()(SimpleNamespace(text=text)) is True
-
-
-@pytest.mark.asyncio
-async def test_project_trigger_does_not_match_plain_text():
-    assert await ProjectTriggerFilter()(SimpleNamespace(text="хороший проект")) is False

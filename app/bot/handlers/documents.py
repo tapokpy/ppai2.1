@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,6 +15,8 @@ from app.core.database import async_session_maker
 from app.core.router import CascadeRouter
 from app.models.sqlalchemy.document import Document
 from app.models.sqlalchemy.engineering_doc import EngineeringDoc
+from app.models.sqlalchemy.project import Project
+from app.models.sqlalchemy.project_file import ProjectFile
 from app.models.sqlalchemy.user import User
 from app.services import cad_parser
 from app.services.engineering_rag_ingest import index_engineering_doc
@@ -25,6 +28,13 @@ router = Router(name="documents")
 DOCUMENT_TEMP_DIR = Path("data/temp")
 CAD_EXTENSIONS = {".dxf", ".dwg", ".cdr"}
 STOCK_TABLE_EXTENSIONS = {".xlsx", ".csv"}
+
+# Captioning an upload with "проект3 <ID>" attaches it to that Project as a
+# config/preset file (ProjectFile) regardless of extension — the one place
+# arbitrary non-CAD project files actually get in, since Telegram commands
+# can't carry a file attachment themselves. Explicit caption intent wins
+# over extension-based routing (checked first in handle_document).
+PROJECT_FILE_CAPTION_PATTERN = re.compile(r"\bпроект3\s+(\d+)\b", re.IGNORECASE)
 
 
 def _is_pdf(file_name: str | None, mime_type: str | None) -> bool:
@@ -50,6 +60,11 @@ def _stock_table_extension(file_name: str | None) -> str | None:
 @router.message(F.document, ShouldRespondFilter())
 async def handle_document(message: Message, bot: Bot, cascade_router: CascadeRouter, db_user: User) -> None:
     document = message.document
+
+    caption_match = PROJECT_FILE_CAPTION_PATTERN.search(message.caption or "")
+    if caption_match:
+        await _handle_project_file_upload(message, bot, int(caption_match.group(1)))
+        return
 
     if _is_pdf(document.file_name, document.mime_type):
         await _handle_pdf_upload(message, bot, cascade_router, db_user)
@@ -193,6 +208,35 @@ def _read_xlsx_rows(path: Path) -> list[list[str]]:
 def _read_csv_rows(path: Path) -> list[list[str]]:
     with path.open(newline="", encoding="utf-8-sig") as f:
         return list(csv.reader(f))
+
+
+async def _handle_project_file_upload(message: Message, bot: Bot, project_id: int) -> None:
+    if not is_admin(message.from_user.id):
+        await message.answer(ACCESS_DENIED_MESSAGE)
+        return
+
+    async with async_session_maker() as session:
+        project = await session.get(Project, project_id)
+    if project is None:
+        await message.answer(f"Проект #{project_id} не найден.")
+        return
+
+    document = message.document
+    file = await bot.get_file(document.file_id)
+    storage_dir = Path(settings.PROJECT_FILES_PATH)
+    storage_dir.mkdir(parents=True, exist_ok=True)
+
+    file_name = document.file_name or f"file_{uuid4().hex}"
+    stored_path = storage_dir / f"{uuid4().hex}_{file_name}"
+    await bot.download_file(file.file_path, destination=stored_path)
+
+    async with async_session_maker() as session:
+        session.add(
+            ProjectFile(project_id=project.id, file_path=str(stored_path), file_name=file_name, kind="config")
+        )
+        await session.commit()
+
+    await message.answer(f"Файл «{file_name}» прикреплён к проекту «{project.name}».")
 
 
 async def _handle_stock_table_upload(message: Message, bot: Bot, ext: str) -> None:

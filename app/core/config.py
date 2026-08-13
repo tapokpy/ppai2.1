@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     # service account — so no credentials file/JSON key ever needs to be
     # stored on disk. Empty = /import_sheet is disabled with a clear message.
     GOOGLE_SHEETS_API_KEY: str = ""
+    # Non-CAD config/preset files attached to a Project via the
+    # "проект3 <ID>" upload caption (app/bot/handlers/documents.py).
+    PROJECT_FILES_PATH: str = "./data/project_files"
 
     @property
     def admin_ids(self) -> list[int]:
