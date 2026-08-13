@@ -1,8 +1,8 @@
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.bot.filters import (
     WAREHOUSE_TRIGGER_PATTERN,
@@ -12,6 +12,7 @@ from app.bot.filters import (
 )
 from app.bot.fsm.warehouse import StockAddStates
 from app.bot.handlers.admin import ACCESS_DENIED_MESSAGE, is_admin
+from app.bot.keyboards.reply import BTN_STOCK_SUMMARY
 from app.core.config import settings
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.warehouse import Cell, Rack, Shelf, Warehouse
@@ -25,6 +26,7 @@ NO_QUERY_REPLY = "Что искать? Например: «склад3 моду�
 NOT_FOUND_REPLY = "Ничего похожего на складе не найдено."
 IMPORT_SHEET_USAGE = "Использование: /import_sheet <ссылка или ID Google-таблицы>"
 IMPORT_DONE_REPLY = "Импортировано позиций: {count}."
+EMPTY_STOCK_REPLY = "На складе пока нет ни одной позиции."
 
 
 def _format_stock_matches(rows: list[tuple[StockItem, Cell, Shelf, Rack, Warehouse]]) -> str:
@@ -142,6 +144,22 @@ async def stock_add_quantity(message: Message, state: FSMContext) -> None:
     await message.answer(
         f"Записано: «{row.item_name}» — {quantity} шт, {row.warehouse}/{row.rack}/{row.shelf}/{row.cell}."
     )
+
+
+@router.message(F.text == BTN_STOCK_SUMMARY, ShouldRespondFilter())
+async def handle_stock_summary(message: Message) -> None:
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(StockItem.item_type, func.sum(StockItem.quantity)).group_by(StockItem.item_type)
+        )
+        rows = result.all()
+
+    if not rows:
+        await message.answer(EMPTY_STOCK_REPLY)
+        return
+
+    lines = [f"{item_type}: {total} шт" for item_type, total in rows]
+    await message.answer("Сводка по складу:\n" + "\n".join(lines))
 
 
 @router.message(Command("import_sheet"))
