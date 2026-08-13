@@ -28,7 +28,8 @@ requires_redis = pytest.mark.skipif(
 )
 
 _TABLES_TO_RESET = (
-    "messages, activity_logs, business_rules, reminders, users, showroom_media, todos, engineering_docs"
+    "messages, activity_logs, business_rules, reminders, users, showroom_media, todos, engineering_docs, "
+    "stock_items, cells, shelves, racks, warehouses, project_files, projects"
 )
 
 

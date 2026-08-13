@@ -11,7 +11,8 @@ def test_build_dispatcher_registers_all_routers():
     included_names = {router.name for router in dp.sub_routers}
 
     assert included_names == {
-        "start", "admin", "group_chat", "engineer", "documents", "todo", "media", "showroom", "cad", "chat",
+        "start", "admin", "group_chat", "engineer", "documents", "todo", "media", "showroom", "cad",
+        "warehouse", "projects", "chat",
     }
 
 

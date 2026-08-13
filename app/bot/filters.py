@@ -35,6 +35,33 @@ class CadTriggerFilter(BaseFilter):
         return bool(message.text) and bool(CAD_TRIGGER_PATTERN.search(message.text))
 
 
+# "склад3" — read-only stock lookup ("путеводитель": "склад3 где модуль X"),
+# open to any approved user. Adding stock ("остаток3") is a separate,
+# admin-only trigger so the read path doesn't need an is_admin check at all.
+WAREHOUSE_TRIGGER_PATTERN = re.compile(r"\b(?:склад|warehouse)3\b", re.IGNORECASE)
+
+
+class WarehouseTriggerFilter(BaseFilter):
+    async def __call__(self, message: Message) -> bool:
+        return bool(message.text) and bool(WAREHOUSE_TRIGGER_PATTERN.search(message.text))
+
+
+STOCK_ADD_TRIGGER_PATTERN = re.compile(r"\b(?:остаток|stock)3\b", re.IGNORECASE)
+
+
+class StockAddTriggerFilter(BaseFilter):
+    async def __call__(self, message: Message) -> bool:
+        return bool(message.text) and bool(STOCK_ADD_TRIGGER_PATTERN.search(message.text))
+
+
+PROJECT_TRIGGER_PATTERN = re.compile(r"\b(?:проект|project)3\b", re.IGNORECASE)
+
+
+class ProjectTriggerFilter(BaseFilter):
+    async def __call__(self, message: Message) -> bool:
+        return bool(message.text) and bool(PROJECT_TRIGGER_PATTERN.search(message.text))
+
+
 URL_PATTERN = re.compile(r"^\s*https?://\S+\s*$", re.IGNORECASE)
 
 

@@ -14,11 +14,15 @@ from app.models.sqlalchemy import (  # noqa: E402,F401
     document,
     engineering_doc,
     message,
+    project,
+    project_file,
     rag_trace_event,
     reminder,
     showroom_media,
+    stock_item,
     todo,
     user,
+    warehouse,
 )
 
 config = context.config

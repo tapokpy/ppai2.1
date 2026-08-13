@@ -96,6 +96,13 @@ class Settings(BaseSettings):
     ODA_FILE_CONVERTER_PATH: str = ""
     CAPABILITIES_PATH: str = "./capabilities.yaml"
 
+    # Warehouse (Warehouse -> Rack -> Shelf -> Cell stock, per
+    # LOKI_WAREHOUSE_ECOSYSTEM_SPEC_v6.md). Google Sheets import reads a
+    # PUBLIC sheet ("anyone with link can view") via API key — not a
+    # service account — so no credentials file/JSON key ever needs to be
+    # stored on disk. Empty = /import_sheet is disabled with a clear message.
+    GOOGLE_SHEETS_API_KEY: str = ""
+
     @property
     def admin_ids(self) -> list[int]:
         return [int(x) for x in self.ADMIN_IDS.split(",") if x.strip()]
