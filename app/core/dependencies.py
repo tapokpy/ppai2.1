@@ -5,7 +5,9 @@ from app.core.router import CascadeRouter
 from app.services.cloud_llm import CloudLLMClient
 from app.services.embeddings import default_embedding_function
 from app.services.local_llm import LocalLLMClient
+from app.services.media_downloader import MediaDownloader
 from app.services.rag_engine import RAGEngine
+from app.services.resolume_controller import ResolumeController, ScreensMap
 from app.services.stt import Transcriber
 
 
@@ -16,6 +18,25 @@ def build_transcriber() -> Transcriber:
         compute_type=settings.WHISPER_COMPUTE_TYPE,
         language=settings.WHISPER_LANGUAGE,
     )
+
+
+def build_media_downloader() -> MediaDownloader:
+    return MediaDownloader(
+        storage_dir=settings.MEDIA_STORAGE_PATH,
+        quota_gb=settings.MEDIA_STORAGE_QUOTA_GB,
+    )
+
+
+def build_resolume_controller() -> ResolumeController:
+    return ResolumeController(
+        osc_host=settings.RESOLUME_OSC_HOST,
+        osc_port=settings.RESOLUME_OSC_PORT,
+        rest_base_url=settings.RESOLUME_REST_BASE_URL,
+    )
+
+
+def build_screens_map() -> ScreensMap:
+    return ScreensMap.load(settings.SCREENS_MAP_PATH)
 
 
 def build_cascade_router() -> CascadeRouter:

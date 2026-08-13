@@ -11,6 +11,7 @@ RUN apt-get update \
         tesseract-ocr \
         tesseract-ocr-rus \
         libgomp1 \
+        ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -24,7 +25,11 @@ COPY alembic.ini .
 # so chat and the todo-capture parser are grounded in the real project docs.
 COPY ARCHITECTURE.md README.md AUTONOMOUS_EXECUTION.md DEVELOPMENT_TOOLS.md \
      OPEN_SOURCE_STRATEGY.md INSTALL.md DEPLOYMENT.md ./
+# Baseline fallback if the bind mount from docker-compose.prod.yml isn't
+# present (e.g. running the image standalone) — real config is meant to be
+# edited on the host and bind-mounted over this.
+COPY screens_map.yaml .
 
-RUN mkdir -p data/chroma_db data/logs data/temp
+RUN mkdir -p data/chroma_db data/logs data/temp data/media
 
 CMD ["python", "-m", "app.bot.main"]

@@ -70,6 +70,21 @@ class Settings(BaseSettings):
     API_INTERNAL_BASE_URL: str = "http://api:8000/api/v1"
     WEB_DASHBOARD_URL: str = "http://localhost:8080"
 
+    # Showroom (Resolume Arena control + media library)
+    # MEDIA_STORAGE_PATH is a path *inside the bot container* — in production
+    # it's bind-mounted from the real Windows folder (D:/Pappai_Media) via
+    # docker-compose.prod.yml, so the spec'd host path never needs to appear
+    # in application code.
+    MEDIA_STORAGE_PATH: str = "./data/media"
+    MEDIA_STORAGE_QUOTA_GB: float = 100.0
+    SCREENS_MAP_PATH: str = "./screens_map.yaml"
+    # Resolume runs on the same machine as Docker Desktop (per spec) — from
+    # inside a container that's the host, not localhost. host.docker.internal
+    # is Docker Desktop's standard name for "the machine running Docker".
+    RESOLUME_OSC_HOST: str = "host.docker.internal"
+    RESOLUME_OSC_PORT: int = 7000
+    RESOLUME_REST_BASE_URL: str = "http://host.docker.internal:8080/api/v1"
+
     @property
     def admin_ids(self) -> list[int]:
         return [int(x) for x in self.ADMIN_IDS.split(",") if x.strip()]

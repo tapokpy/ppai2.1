@@ -19,6 +19,30 @@ class TodoTriggerFilter(BaseFilter):
         return bool(message.text) and bool(TODO_TRIGGER_PATTERN.search(message.text))
 
 
+SHOWROOM_TRIGGER_PATTERN = re.compile(r"\b(?:шоурум|showroom)3\b", re.IGNORECASE)
+
+
+class ShowroomTriggerFilter(BaseFilter):
+    async def __call__(self, message: Message) -> bool:
+        return bool(message.text) and bool(SHOWROOM_TRIGGER_PATTERN.search(message.text))
+
+
+URL_PATTERN = re.compile(r"^\s*https?://\S+\s*$", re.IGNORECASE)
+
+
+class MediaLinkFilter(BaseFilter):
+    """The message is *just* a link, nothing else — the media downloader's
+    trigger. Deliberately strict (not "contains a URL anywhere") so a
+    normal question that happens to mention a link ("смотри вот это
+    https://... что думаешь?") still goes to regular chat instead of being
+    hijacked as a download request. Not scoped to specific sites — yt-dlp
+    itself supports a very wide range of sources, and rejecting unsupported
+    ones is handled downstream (MediaDownloadError), not by this filter."""
+
+    async def __call__(self, message: Message) -> bool:
+        return bool(message.text) and bool(URL_PATTERN.match(message.text))
+
+
 class ShouldRespondFilter(BaseFilter):
     """Bot answers every private message, but in groups only on mention or reply-to-bot."""
 

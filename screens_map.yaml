@@ -1,0 +1,27 @@
+# Maps friendly screen names (used in chat/commands) to a Resolume Arena
+# layer index — which physical output that layer feeds. Edit this file to
+# match your real Resolume composition — no rebuild needed, it's
+# bind-mounted into the bot container (see docker-compose.prod.yml).
+# Indices are 1-based, matching Resolume's own UI numbering.
+#
+# Which *clip* plays (the column) is never fixed here — it's always given
+# at trigger time, either by naming a column directly in chat ("шоурум3
+# запусти 3 колонку на главном фасаде") or by a preset step below.
+#
+# Example:
+# screens:
+#   Главный фасад:
+#     layer: 1
+#   Левый пилон:
+#     layer: 2
+#
+# presets:
+#   Ночной режим:
+#     - screen: Главный фасад
+#       column: 3
+#     - screen: Левый пилон
+#       column: 3
+
+screens: {}
+
+presets: {}
