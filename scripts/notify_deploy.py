@@ -27,7 +27,7 @@ TELEGRAM_API_BASE = "https://api.telegram.org"
 
 
 def _format_message(bullets: list[str], services: str | None) -> str:
-    body = "🔧 Обновление ppai\n\n" + "\n".join(bullets)
+    body = "🔧 Обновление Папай\n\n" + "\n".join(bullets)
     if services:
         body += f"\n\nДеплой: {services}"
     return body

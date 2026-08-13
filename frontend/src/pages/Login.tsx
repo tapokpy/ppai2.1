@@ -28,7 +28,7 @@ export default function Login() {
 
   return (
     <div className="login-box">
-      <h1>ppai — RAG панель</h1>
+      <h1>Папай — RAG панель</h1>
       {!ott && (
         <p className="muted">
           Откройте эту страницу по ссылке из команды <code>/dashboard</code> в Telegram-боте.
