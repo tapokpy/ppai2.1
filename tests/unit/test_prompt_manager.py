@@ -1,7 +1,9 @@
 from unittest.mock import patch
 
+import pytest
+
 from app.core.capabilities import load_capabilities_summary
-from app.core.prompt_manager import PromptType, detect_prompt_type, get_system_prompt
+from app.core.prompt_manager import PromptType, detect_prompt_type, get_system_prompt, is_capability_question
 
 
 def test_detects_calculator_type():
@@ -67,3 +69,45 @@ def test_get_system_prompt_always_includes_golden_standard():
         assert "NovaStar" in prompt
         assert "Подрезка модулей ЗАПРЕЩЕНА" in prompt
         assert "1.3" in prompt
+
+
+def test_get_system_prompt_instructs_russian_only():
+    for prompt_type in PromptType:
+        prompt = get_system_prompt(prompt_type).lower()
+        assert "русском языке" in prompt
+
+
+def test_get_system_prompt_instructs_capability_questions_use_capabilities_list():
+    prompt = get_system_prompt(PromptType.DEFAULT)
+    assert "умеешь ли ты" in prompt.lower()
+    assert "возможности" in prompt.lower()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "умеешь ли ты работать с чертежами",
+        "можешь ли ты читать PDF",
+        "что ты умеешь",
+        "что ты можешь",
+        "расскажи про твои возможности",
+        "какой у тебя функционал",
+        "с чем ты работаешь",
+        "какие форматы ты поддерживаешь",
+    ],
+)
+def test_is_capability_question_matches_common_phrasings(text):
+    assert is_capability_question(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "какой стандартный размер модуля",
+        "рассчитай мощность экрана",
+        "сколько стоит комплект",
+        "привет",
+    ],
+)
+def test_is_capability_question_does_not_match_regular_questions(text):
+    assert is_capability_question(text) is False

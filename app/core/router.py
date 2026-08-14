@@ -7,7 +7,12 @@ from loguru import logger
 from redis.asyncio import Redis
 
 from app.core.database import async_session_maker
-from app.core.prompt_manager import CONFIDENCE_INSTRUCTION, detect_prompt_type, get_system_prompt
+from app.core.prompt_manager import (
+    CONFIDENCE_INSTRUCTION,
+    detect_prompt_type,
+    get_system_prompt,
+    is_capability_question,
+)
 from app.services.audit import log_action
 from app.services.cloud_llm import CloudLLMClient, CloudUnavailableError
 from app.services.local_llm import LocalLLMClient
@@ -112,7 +117,15 @@ class CascadeRouter:
 
         self._emit(events, "retrieval_started", {"collection": self._rag.collection_name})
         rag_start = time.monotonic()
-        rag_result = self._rag.query(prompt)
+        if is_capability_question(prompt):
+            # Skip RAG entirely for "умеешь ли ты...?" style questions —
+            # a tangentially-matched project-doc chunk here was observed
+            # live to confuse the local model into a garbled/non-Russian
+            # answer instead of just listing capabilities.yaml's contents
+            # (which get_system_prompt() already always includes).
+            rag_result = {"found": False, "max_score": 0.0, "documents": [], "metadatas": [], "scores": []}
+        else:
+            rag_result = self._rag.query(prompt)
         timing["rag_seconds"] = round(time.monotonic() - rag_start, 2)
         self._emit(events, "query_embedded", {"model": self._rag.embedding_model_name, "query": prompt})
         self._emit(

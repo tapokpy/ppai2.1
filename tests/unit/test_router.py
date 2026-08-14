@@ -81,6 +81,22 @@ async def test_uses_rag_when_context_found_and_local_can_answer():
 
 
 @pytest.mark.asyncio
+async def test_capability_question_skips_rag_entirely():
+    # rag_found=True would normally inject "контекст документа" as grounding
+    # — a capability question must ignore that and never even call query().
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=True, rag_documents=["не относящийся к делу текст"]
+    )
+
+    result = await router.process_query(user_id=1, prompt="умеешь ли ты работать с чертежами")
+
+    rag_engine.query.assert_not_called()
+    assert result["source"] == "local"
+    assert result["context_used"] is False
+    assert "не относящийся к делу текст" not in local_llm.generate_with_usage.call_args.kwargs["system_prompt"]
+
+
+@pytest.mark.asyncio
 async def test_falls_back_to_local_when_rag_not_found():
     router, rag_engine, local_llm, cloud_llm, redis_client = make_router(rag_found=False)
 
