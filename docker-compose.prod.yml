@@ -92,6 +92,9 @@ services:
       CHROMA_PERSIST_DIR: /app/data/chroma_db
       MEDIA_STORAGE_PATH: /app/data/media
       SCREENS_MAP_PATH: /app/screens_map.yaml
+      # Baked into the image (Dockerfile.bot) — not a host-provided path
+      # like the others above, but set the same way for consistency.
+      ODA_FILE_CONVERTER_PATH: /usr/local/bin/oda-convert.sh
     volumes:
       - app_data:/app/data
       # Real showroom media library on the host (e.g. D:/Pappai_Media on
