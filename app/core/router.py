@@ -6,6 +6,8 @@ from datetime import date
 from loguru import logger
 from redis.asyncio import Redis
 
+from app.core.capabilities import format_capabilities_for_user
+from app.core.config import settings
 from app.core.database import async_session_maker
 from app.core.prompt_manager import (
     CONFIDENCE_INSTRUCTION,
@@ -113,19 +115,36 @@ class CascadeRouter:
             result["rag_trace_id"] = trace_id
             return result
 
+        if is_capability_question(prompt):
+            # "Умеешь ли ты...?" answered deterministically from
+            # capabilities.yaml, with no RAG lookup and no LLM call at all
+            # — tried asking the local LLM to just relay the (always-
+            # present-in-its-system-prompt) capabilities list first, and it
+            # ignored it live, answering from its own generic training-data
+            # priors about "an AI" instead (occasionally in Chinese). A
+            # question this well-defined doesn't need generation, only
+            # correct retrieval — see app/core/capabilities.py.
+            text = format_capabilities_for_user(settings.CAPABILITIES_PATH)
+            self._emit(
+                events, "answer_generated", {"source": "capabilities", "confidence": "high", "length": len(text)}
+            )
+            return {
+                "text": text,
+                "source": "capabilities",
+                "context_used": False,
+                "rag_debug": None,
+                "confidence": "high",
+                "llm_usage": {},
+                "timing": timing,
+                "rag_trace_id": trace_id,
+                "trace_events": events,
+            }
+
         base_system_prompt = get_system_prompt(detect_prompt_type(prompt)) + CONFIDENCE_INSTRUCTION
 
         self._emit(events, "retrieval_started", {"collection": self._rag.collection_name})
         rag_start = time.monotonic()
-        if is_capability_question(prompt):
-            # Skip RAG entirely for "умеешь ли ты...?" style questions —
-            # a tangentially-matched project-doc chunk here was observed
-            # live to confuse the local model into a garbled/non-Russian
-            # answer instead of just listing capabilities.yaml's contents
-            # (which get_system_prompt() already always includes).
-            rag_result = {"found": False, "max_score": 0.0, "documents": [], "metadatas": [], "scores": []}
-        else:
-            rag_result = self._rag.query(prompt)
+        rag_result = self._rag.query(prompt)
         timing["rag_seconds"] = round(time.monotonic() - rag_start, 2)
         self._emit(events, "query_embedded", {"model": self._rag.embedding_model_name, "query": prompt})
         self._emit(

@@ -1,4 +1,4 @@
-from app.core.capabilities import load_capabilities_summary
+from app.core.capabilities import format_capabilities_for_user, load_capabilities_summary
 
 
 def test_load_capabilities_summary_renders_bullet_list(tmp_path):
@@ -61,3 +61,26 @@ capabilities:
 
     assert "Без описания" not in summary
     assert "Полная: Есть всё." in summary
+
+
+def test_format_capabilities_for_user_is_first_person_not_system_prompt_phrasing(tmp_path):
+    config = tmp_path / "capabilities.yaml"
+    config.write_text(
+        "capabilities:\n  - name: Чертежи\n    description: Читаю .dxf/.dwg.\n", encoding="utf-8"
+    )
+
+    text = format_capabilities_for_user(str(config))
+
+    assert "Вот что я умею" in text
+    assert "Чертежи: Читаю .dxf/.dwg." in text
+    # Not the system-prompt phrasing, which addresses the LLM as "ты" in a
+    # way that would misleadingly read as addressing the human user instead
+    # if sent to them verbatim.
+    assert "которыми ты реально располагаешь" not in text
+
+
+def test_format_capabilities_for_user_returns_friendly_message_when_missing(tmp_path):
+    text = format_capabilities_for_user(str(tmp_path / "nope.yaml"))
+
+    assert text != ""
+    assert "недоступен" in text

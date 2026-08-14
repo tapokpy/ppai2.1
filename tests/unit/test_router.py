@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fakeredis.aioredis import FakeRedis
@@ -81,19 +81,32 @@ async def test_uses_rag_when_context_found_and_local_can_answer():
 
 
 @pytest.mark.asyncio
-async def test_capability_question_skips_rag_entirely():
-    # rag_found=True would normally inject "контекст документа" as grounding
-    # — a capability question must ignore that and never even call query().
+async def test_capability_question_answered_deterministically_no_rag_no_llm(tmp_path):
+    # rag_found=True would normally inject "контекст документа" as grounding,
+    # and local_llm would normally get called — a capability question must
+    # skip BOTH: answered straight from capabilities.yaml (see
+    # app/core/capabilities.py::format_capabilities_for_user), since asking
+    # the local LLM to just relay that list was tried first and failed live
+    # (it answered from its own generic priors instead, sometimes in Chinese).
+    config = tmp_path / "capabilities.yaml"
+    config.write_text(
+        "capabilities:\n  - name: Чертежи\n    description: Умею читать .dxf/.dwg.\n", encoding="utf-8"
+    )
     router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
         rag_found=True, rag_documents=["не относящийся к делу текст"]
     )
 
-    result = await router.process_query(user_id=1, prompt="умеешь ли ты работать с чертежами")
+    with patch("app.core.router.settings") as settings_mock:
+        settings_mock.CAPABILITIES_PATH = str(config)
+        result = await router.process_query(user_id=1, prompt="умеешь ли ты работать с чертежами")
 
     rag_engine.query.assert_not_called()
-    assert result["source"] == "local"
+    local_llm.generate_with_usage.assert_not_awaited()
+    assert result["source"] == "capabilities"
     assert result["context_used"] is False
-    assert "не относящийся к делу текст" not in local_llm.generate_with_usage.call_args.kwargs["system_prompt"]
+    assert result["confidence"] == "high"
+    assert "Чертежи" in result["text"]
+    assert "не относящийся к делу текст" not in result["text"]
 
 
 @pytest.mark.asyncio
