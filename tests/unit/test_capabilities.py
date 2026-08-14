@@ -84,3 +84,21 @@ def test_format_capabilities_for_user_returns_friendly_message_when_missing(tmp_
 
     assert text != ""
     assert "недоступен" in text
+
+
+def test_format_capabilities_for_user_escapes_html_placeholders(tmp_path):
+    # Real capabilities.yaml entries use literal "<ID>"-style placeholders
+    # in their descriptions (e.g. "/project_bom <ID>"). The bot sends this
+    # text straight to Telegram with parse_mode=HTML, which rejects
+    # unescaped "<...>" as an unsupported tag and fails to send the whole
+    # reply — this must come out escaped, not raw.
+    config = tmp_path / "capabilities.yaml"
+    config.write_text(
+        "capabilities:\n  - name: Проекты\n    description: \"/project_bom <ID> считает BOM.\"\n",
+        encoding="utf-8",
+    )
+
+    text = format_capabilities_for_user(str(config))
+
+    assert "<ID>" not in text
+    assert "&lt;ID&gt;" in text

@@ -1,3 +1,4 @@
+import html
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -62,9 +63,18 @@ def format_capabilities_for_user(path: str) -> str:
     matches) instead of asking a small local LLM to faithfully reproduce a
     list it's given. That was tried first and failed live: the model
     ignored the list and answered from its own generic training-data
-    priors about what "an AI" can/can't do, occasionally in Chinese."""
+    priors about what "an AI" can/can't do, occasionally in Chinese.
+
+    HTML-escaped because this text is sent straight to Telegram, which
+    parses replies as HTML (app/bot/main.py's DefaultBotProperties) —
+    several capability descriptions contain literal placeholders like
+    "<ID>", which Telegram's HTML parser otherwise rejects as an
+    unsupported tag, failing the whole reply. load_capabilities_summary is
+    deliberately NOT escaped since it only ever reaches the LLM's system
+    prompt, never Telegram directly."""
     lines = _capability_lines(path)
     if not lines:
         return "Список возможностей сейчас недоступен — обратитесь к администратору."
 
-    return "Вот что я умею:\n" + "\n".join(lines)
+    escaped_lines = [html.escape(line) for line in lines]
+    return "Вот что я умею:\n" + "\n".join(escaped_lines)
