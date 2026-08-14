@@ -1,3 +1,12 @@
+# CPU-only torch build: the bot never runs GPU inference itself (the LLM
+# is a separate Ollama service talked to over HTTP, not loaded in-process
+# via torch), but sentence-transformers pulls in torch>=1.11.0 with no
+# opinion on CUDA vs CPU, so pip's default resolution grabs the full
+# CUDA-bundled wheel — 2+ extra GB of nvidia-*-cu13 packages that are
+# never used and repeatedly stalled mid-download during a real deploy.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.13.0+cpu
+
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic-settings==2.6.0

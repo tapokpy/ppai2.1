@@ -13,6 +13,17 @@ RUN apt-get update \
         libgomp1 \
         ffmpeg \
         curl \
+        # ezdxf's drawing renderer (cad_parser.py::render_to_pdf/render_to_png)
+        # resolves TEXT/MTEXT fonts by exact filename against a hardcoded
+        # fallback list (DejaVuSans.ttf, Arial.ttf, ...) — none of which
+        # match the URW-base35 fonts ghostscript already pulls in, so any
+        # real-world drawing whose text style names a font we don't have
+        # (which is most of them) crashed the whole render with "no fonts
+        # available, not even fallback fonts" instead of degrading to a
+        # substitute glyph. fonts-noto-cjk covers the Chinese text common in
+        # drawings from LED panel manufacturers (real user-reported files).
+        fonts-dejavu-core \
+        fonts-noto-cjk \
         xvfb \
         xauth \
         libx11-6 libxcb1 libxext6 libxrender1 libxi6 libsm6 libice6 \
