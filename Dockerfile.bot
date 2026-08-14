@@ -32,6 +32,13 @@ COPY screens_map.yaml .
 # capabilities.yaml is a code artifact (kept up to date alongside features,
 # not site config), so it's baked into the image, not bind-mounted.
 COPY capabilities.yaml .
+# Generated on the host from `git log` right before this build (not
+# committed — see .gitignore) — read at startup by
+# app/bot/main.py::notify_admins_of_restart to tell admins what's new via
+# Telegram on every deploy, not just that a restart happened. The deploy
+# step must create this file (even empty) before `docker build`, since
+# COPY of a missing file fails the build.
+COPY DEPLOY_CHANGELOG.txt .
 
 RUN mkdir -p data/chroma_db data/logs data/temp data/media/Draw
 

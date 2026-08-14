@@ -1,5 +1,6 @@
 import asyncio
 from functools import partial
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -37,6 +38,25 @@ from app.services.project_docs_ingest import sync_project_docs
 
 
 RESTART_NOTIFICATION = "🔄 Бот перезапущен и снова принимает сообщения."
+DEPLOY_CHANGELOG_PATH = Path("DEPLOY_CHANGELOG.txt")
+_CHANGELOG_MAX_LINES = 15
+
+
+def _read_deploy_changelog(path: Path = DEPLOY_CHANGELOG_PATH) -> str:
+    """DEPLOY_CHANGELOG.txt is generated on the host from `git log` right
+    before `docker build` (not committed — see .gitignore — it's a
+    snapshot of what's in *this* image, regenerated fresh per deploy) and
+    baked into the image. Missing file (e.g. running the image standalone
+    without going through the deploy step) just means no changelog block,
+    not an error."""
+    if not path.exists():
+        return ""
+
+    lines = path.read_text(encoding="utf-8").splitlines()[:_CHANGELOG_MAX_LINES]
+    if not lines:
+        return ""
+
+    return "\n📝 Что нового:\n" + "\n".join(f"— {line}" for line in lines)
 
 
 async def notify_admins_of_restart(bot: Bot) -> None:
@@ -48,9 +68,10 @@ async def notify_admins_of_restart(bot: Bot) -> None:
     A failure to notify one admin (e.g. they blocked the bot) must not stop
     the others or block startup.
     """
+    text = RESTART_NOTIFICATION + _read_deploy_changelog()
     for admin_id in settings.admin_ids:
         try:
-            await bot.send_message(admin_id, RESTART_NOTIFICATION)
+            await bot.send_message(admin_id, text)
         except Exception as exc:
             logger.warning(f"Failed to notify admin {admin_id} of restart: {exc}")
 
