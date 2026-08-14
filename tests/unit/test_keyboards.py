@@ -4,6 +4,7 @@ from app.bot.keyboards.reply import (
     BTN_COMPONENTS,
     BTN_MODULE_CALC,
     BTN_POWER_CALC,
+    BTN_RAG_MEMORY,
     BTN_STOCK_SUMMARY,
     main_menu,
 )
@@ -14,7 +15,9 @@ def test_main_menu_has_expected_buttons():
 
     texts = [button.text for row in markup.keyboard for button in row]
 
-    assert texts == [BTN_POWER_CALC, BTN_MODULE_CALC, BTN_BOM_CALC, BTN_STOCK_SUMMARY, BTN_COMPONENTS]
+    assert texts == [
+        BTN_POWER_CALC, BTN_MODULE_CALC, BTN_BOM_CALC, BTN_STOCK_SUMMARY, BTN_COMPONENTS, BTN_RAG_MEMORY,
+    ]
     assert markup.resize_keyboard is True
 
 

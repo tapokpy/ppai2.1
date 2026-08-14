@@ -15,6 +15,7 @@ from app.bot.handlers import (
     group_chat,
     media,
     projects,
+    rag_memory,
     showroom,
     start,
     todo,
@@ -70,6 +71,7 @@ def build_dispatcher() -> Dispatcher:
     dp.include_router(cad.router)
     dp.include_router(warehouse.router)
     dp.include_router(projects.router)
+    dp.include_router(rag_memory.router)
     dp.include_router(chat.router)
     return dp
 

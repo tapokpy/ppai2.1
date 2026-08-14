@@ -12,7 +12,7 @@ def test_build_dispatcher_registers_all_routers():
 
     assert included_names == {
         "start", "admin", "group_chat", "engineer", "documents", "todo", "media", "showroom", "cad",
-        "warehouse", "projects", "chat",
+        "warehouse", "projects", "rag_memory", "chat",
     }
 
 
