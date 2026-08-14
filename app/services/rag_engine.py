@@ -19,6 +19,17 @@ _BOOST_STOPWORDS = {
 # boost and re-ranking, even when the caller asked for a smaller top_k.
 _MIN_CANDIDATE_POOL = 20
 
+# Sources indexed for cross-search (engineering_rag_ingest.py) rather than as
+# genuine knowledge-base content — a CAD drawing's project_name or a video
+# title is exactly the kind of short, name-like text the literal-match boost
+# below was designed to reward, so without this exclusion a completely
+# unrelated question that happens to share a 4+-letter word with a drawing's
+# name (a project name, a GOST reference, a common noun) would get boosted
+# to score>=0.9 and treated as grounding context. They can still surface via
+# genuine embedding similarity — just not via the literal-keyword shortcut
+# meant for proper-noun knowledge-base queries.
+_NO_LITERAL_BOOST_SOURCES = {"engineering_doc", "showroom_media"}
+
 
 class RAGEngine:
     def __init__(
@@ -104,8 +115,11 @@ class RAGEngine:
         ]
         if query_words:
             scores = [
-                max(score, 0.9) if any(w in doc.lower() for w in query_words) else score
-                for score, doc in zip(scores, documents)
+                max(score, 0.9)
+                if (meta or {}).get("source") not in _NO_LITERAL_BOOST_SOURCES
+                and any(w in doc.lower() for w in query_words)
+                else score
+                for score, doc, meta in zip(scores, documents, metadatas)
             ]
 
         # Re-rank by the boosted score (not the original embedding order) so

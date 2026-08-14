@@ -366,9 +366,18 @@ async def _finish_bom_calculation(message: Message, state: FSMContext, db_user: 
     if project_id is not None:
         async with async_session_maker() as session:
             project = await session.get(Project, project_id)
-            if project is not None:
+            if project is None:
+                # Can legitimately happen: the project was deleted while
+                # this multi-step dialog (screen type -> width -> height ->
+                # ... ) was still in progress. Without this, the user would
+                # see a normal BOM result with no indication their "save to
+                # project" request silently didn't happen.
+                text += f"\n\n⚠️ Проект #{project_id} больше не существует — BOM не сохранён."
+            else:
                 project.bom_data = asdict(result)
                 await session.commit()
+                # log_action is best-effort internally (see app/services/audit.py)
+                # — a failure there logs a warning and doesn't raise.
                 await log_action(
                     session,
                     user_id=db_user.id,

@@ -87,6 +87,24 @@ def test_query_boosts_score_when_query_appears_literally_in_chunk(rag_engine):
     assert result["max_score"] >= 0.9
 
 
+def test_query_does_not_boost_engineering_doc_or_showroom_media_sources(rag_engine):
+    # These sources are indexed for cross-search (engineering_rag_ingest.py),
+    # not as knowledge-base content — a drawing/video name is exactly the
+    # kind of short proper-noun text the boost was built to reward, so
+    # without this exclusion an unrelated question sharing a word with a
+    # drawing's project_name would get spuriously boosted to score>=0.9 and
+    # fed to the LLM as grounding context.
+    noise = "слово " * 200
+    rag_engine.add_documents(
+        texts=[f"{noise}ПридПром{noise}"],
+        metadatas=[{"source": "engineering_doc", "doc_id": 1}],
+    )
+
+    result = rag_engine.query("ПридПром")
+
+    assert result["max_score"] < 0.9
+
+
 def test_query_boost_is_case_insensitive(rag_engine):
     noise = "слово " * 200
     rag_engine.add_documents(texts=[f"{noise}ПридПром{noise}"])

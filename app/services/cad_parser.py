@@ -138,8 +138,13 @@ def extract_data(doc: Drawing) -> ExtractedCadData:
         elif dxftype == "DIMENSION":
             try:
                 data.dimensions.append(entity.get_measurement_text())
-            except Exception:
-                pass
+            except Exception as exc:
+                # Missing/invalid dimension style or measurement override —
+                # not fatal to the rest of extraction, but silent about it
+                # meant "dimensions: []" looked identical to "drawing truly
+                # has none" from the user's side. Logged so an admin can at
+                # least tell the two apart when a user reports "no размеры".
+                logger.warning(f"Failed to read DIMENSION measurement text: {exc}")
 
     return data
 

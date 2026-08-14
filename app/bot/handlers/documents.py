@@ -142,7 +142,12 @@ async def _handle_cad_upload(message: Message, bot: Bot, ext: str, cascade_route
     file = await bot.get_file(document.file_id)
     DOCUMENT_TEMP_DIR.mkdir(parents=True, exist_ok=True)
     local_path = DOCUMENT_TEMP_DIR / f"cad_{uuid4().hex}{ext}"
-    await bot.download_file(file.file_path, destination=local_path)
+
+    try:
+        await bot.download_file(file.file_path, destination=local_path)
+    except Exception:
+        local_path.unlink(missing_ok=True)
+        raise
 
     project_name = Path(document.file_name).stem
     await message.answer(f"⏳ Чертёж «{project_name}» принят, разбираю и рендерю...")
@@ -158,6 +163,11 @@ async def _handle_cad_upload(message: Message, bot: Bot, ext: str, cascade_route
 async def _process_cad_upload(
     message: Message, local_path: Path, project_name: str, cascade_router: CascadeRouter
 ) -> None:
+    # Runs detached via asyncio.create_task — nothing awaits this coroutine,
+    # so an exception that escapes it doesn't propagate anywhere a human
+    # would see it (asyncio just logs "Task exception was never retrieved"
+    # on GC). Every path below must therefore end in a reply to the user,
+    # success or failure, rather than letting anything fall through.
     try:
         try:
             doc, doc_type = await asyncio.to_thread(
@@ -173,27 +183,33 @@ async def _process_cad_upload(
         cad_storage = Path(settings.CAD_STORAGE_PATH)
         cad_storage.mkdir(parents=True, exist_ok=True)
         stored_dxf = cad_storage / f"{uuid4().hex}.dxf"
-        doc.saveas(str(stored_dxf))
+        await asyncio.to_thread(doc.saveas, str(stored_dxf))
         rendered_pdf = stored_dxf.with_suffix(".pdf")
         await asyncio.to_thread(cad_parser.render_to_pdf, doc, rendered_pdf)
+
+        async with async_session_maker() as session:
+            engineering_doc = EngineeringDoc(
+                project_name=project_name,
+                file_path=str(stored_dxf),
+                doc_type=doc_type,
+                extracted_data=extracted.to_dict(),
+                is_generated=False,
+            )
+            session.add(engineering_doc)
+            await session.commit()
+            await session.refresh(engineering_doc)
+            index_engineering_doc(cascade_router.rag_engine, engineering_doc)
+
+        await message.answer(_format_cad_summary(project_name, extracted))
+        await message.answer_document(FSInputFile(str(rendered_pdf)))
+    except Exception as exc:
+        logger.exception(f"CAD upload background processing failed for {project_name}: {exc}")
+        await message.answer(
+            f"Не удалось обработать чертёж «{project_name}» — внутренняя ошибка. Попробуйте другой файл "
+            "или обратитесь к администратору."
+        )
     finally:
         local_path.unlink(missing_ok=True)
-
-    async with async_session_maker() as session:
-        engineering_doc = EngineeringDoc(
-            project_name=project_name,
-            file_path=str(stored_dxf),
-            doc_type=doc_type,
-            extracted_data=extracted.to_dict(),
-            is_generated=False,
-        )
-        session.add(engineering_doc)
-        await session.commit()
-        await session.refresh(engineering_doc)
-        index_engineering_doc(cascade_router.rag_engine, engineering_doc)
-
-    await message.answer(_format_cad_summary(project_name, extracted))
-    await message.answer_document(FSInputFile(str(rendered_pdf)))
 
 
 def _read_xlsx_rows(path: Path) -> list[list[str]]:
@@ -228,7 +244,11 @@ async def _handle_project_file_upload(message: Message, bot: Bot, project_id: in
 
     file_name = document.file_name or f"file_{uuid4().hex}"
     stored_path = storage_dir / f"{uuid4().hex}_{file_name}"
-    await bot.download_file(file.file_path, destination=stored_path)
+    try:
+        await bot.download_file(file.file_path, destination=stored_path)
+    except Exception:
+        stored_path.unlink(missing_ok=True)
+        raise
 
     async with async_session_maker() as session:
         session.add(

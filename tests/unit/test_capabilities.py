@@ -35,6 +35,16 @@ def test_load_capabilities_summary_returns_empty_for_empty_list(tmp_path):
     assert summary == ""
 
 
+def test_load_capabilities_summary_returns_empty_for_malformed_yaml(tmp_path):
+    config = tmp_path / "capabilities.yaml"
+    # Unbalanced brackets — a genuine yaml.YAMLError, not just "empty".
+    config.write_text("capabilities: [\n  - name: Тест\n", encoding="utf-8")
+
+    summary = load_capabilities_summary(str(config))
+
+    assert summary == ""
+
+
 def test_load_capabilities_summary_skips_entries_missing_fields(tmp_path):
     config = tmp_path / "capabilities.yaml"
     config.write_text(

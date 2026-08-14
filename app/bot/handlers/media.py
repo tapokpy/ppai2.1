@@ -119,7 +119,14 @@ async def _run_download(
         )
         return
 
-    index_showroom_media(cascade_router.rag_engine, media)
+    try:
+        index_showroom_media(cascade_router.rag_engine, media)
+    except Exception as exc:
+        # The download itself already succeeded and the file is usable —
+        # a RAG-indexing hiccup (embedding service down, Chroma write
+        # error) shouldn't leave the user staring at "⏳ Загружаю..."
+        # forever over what's ultimately a non-essential side effect.
+        logger.warning(f"Failed to index showroom media {media.id} into RAG: {exc}")
 
     await bot.edit_message_text(
         f"✅ «{media.title}» загружено и добавлено в библиотеку шоурума.", chat_id=chat_id, message_id=message_id

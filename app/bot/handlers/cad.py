@@ -3,6 +3,7 @@ from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.types import FSInputFile, Message
+from loguru import logger
 
 from app.bot.filters import CAD_TRIGGER_PATTERN, CadTriggerFilter, ShouldRespondFilter
 from app.core.cad_command_parser import parse_cad_command
@@ -36,6 +37,10 @@ async def handle_cad_command(message: Message, local_llm: LocalLLMClient, cascad
         await message.answer(MISSING_DIMENSIONS_REPLY)
         return
 
+    if request.width <= 0 or request.height <= 0:
+        await message.answer(MISSING_DIMENSIONS_REPLY)
+        return
+
     project_name = request.project_name or f"{request.shape}_{request.width:g}x{request.height:g}"
 
     try:
@@ -57,7 +62,14 @@ async def handle_cad_command(message: Message, local_llm: LocalLLMClient, cascad
         session.add(doc)
         await session.commit()
         await session.refresh(doc)
+
+    try:
         index_engineering_doc(cascade_router.rag_engine, doc)
+    except Exception as exc:
+        # The drawing itself is already generated and saved — a RAG
+        # indexing failure is a non-essential side effect and must not
+        # stop the user from getting the file they asked for.
+        logger.warning(f"Failed to index generated drawing {doc.id} into RAG: {exc}")
 
     await message.answer(f"Чертёж «{project_name}» готов.")
     await message.answer_document(FSInputFile(str(output_path)))
