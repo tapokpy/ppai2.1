@@ -35,21 +35,30 @@ class CloudLLMClient:
     def model_name(self) -> str:
         return self._model
 
-    async def generate(self, prompt: str, context: str | None = None) -> str:
-        text, _usage = await self.generate_with_usage(prompt, context)
+    async def generate(
+        self, prompt: str, context: str | None = None, history: list[dict] | None = None
+    ) -> str:
+        text, _usage = await self.generate_with_usage(prompt, context, history)
         return text
 
-    async def generate_with_usage(self, prompt: str, context: str | None = None) -> tuple[str, dict]:
+    async def generate_with_usage(
+        self, prompt: str, context: str | None = None, history: list[dict] | None = None
+    ) -> tuple[str, dict]:
         """Same as generate(), but also returns token-usage + an approximate
         cost estimate (for the admin-only debug footer in Telegram) as
-        {"prompt_tokens": int, "completion_tokens": int, "estimated_cost_usd": float}."""
+        {"prompt_tokens": int, "completion_tokens": int, "estimated_cost_usd": float}.
+
+        history is prior conversation turns (see LocalLLMClient.generate_with_usage)
+        sent as preceding messages, ahead of the current prompt/context turn."""
         user_content = f"Context:\n{context}\n\nQuestion:\n{prompt}" if context else prompt
+        messages = list(history) if history else []
+        messages.append({"role": "user", "content": user_content})
 
         try:
             response = await self._client.messages.create(
                 model=self._model,
                 max_tokens=2048,
-                messages=[{"role": "user", "content": user_content}],
+                messages=messages,
             )
         except Exception as exc:
             # Catches anthropic.APIError (network/HTTP-level failures) *and*

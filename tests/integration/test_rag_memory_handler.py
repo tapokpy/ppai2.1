@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.bot.handlers.rag_memory import handle_rag_memory_overview
+from app.bot.handlers.rag_memory import cmd_find, handle_rag_memory_overview
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.document import Document
 from app.models.sqlalchemy.message import Message as MessageModel
@@ -109,3 +109,61 @@ async def test_long_prompt_is_truncated_with_ellipsis(clean_db):
     reply = message.answer.call_args.args[0]
     assert "…" in reply
     assert long_prompt not in reply
+
+
+@pytest.mark.asyncio
+async def test_find_requires_args(clean_db):
+    user = await _seed_user(6)
+    message = _message()
+
+    await cmd_find(message, command=SimpleNamespace(args=None), db_user=user)
+
+    assert "Использование" in message.answer.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_find_matches_prompt_or_response_for_this_user_only(clean_db):
+    user = await _seed_user(7)
+    other_user = await _seed_user(8)
+
+    async with async_session_maker() as session:
+        session.add_all(
+            [
+                MessageModel(
+                    user_id=user.id, prompt="какой шаг пикселя у P2.5?", response="2.5 мм", source="local",
+                    context_used=False,
+                ),
+                MessageModel(
+                    user_id=user.id, prompt="а сколько модулей?", response="Нужно 24 модуля P2.5", source="local",
+                    context_used=False,
+                ),
+                MessageModel(
+                    user_id=user.id, prompt="погода?", response="не знаю", source="local", context_used=False,
+                ),
+                MessageModel(
+                    user_id=other_user.id, prompt="P2.5 у другого юзера", response="r", source="local",
+                    context_used=False,
+                ),
+            ]
+        )
+        await session.commit()
+
+    message = _message()
+    await cmd_find(message, command=SimpleNamespace(args="P2.5"), db_user=user)
+
+    reply = message.answer.call_args.args[0]
+    assert "какой шаг пикселя у P2.5?" in reply
+    assert "Нужно 24 модуля P2.5" in reply
+    assert "погода" not in reply
+    assert "другого юзера" not in reply
+
+
+@pytest.mark.asyncio
+async def test_find_reports_no_matches(clean_db):
+    user = await _seed_user(9)
+    message = _message()
+
+    await cmd_find(message, command=SimpleNamespace(args="несуществующий термин"), db_user=user)
+
+    reply = message.answer.call_args.args[0]
+    assert "Ничего не нашёл" in reply

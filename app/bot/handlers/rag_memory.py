@@ -1,6 +1,7 @@
 from aiogram import F, Router
+from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.bot.filters import ShouldRespondFilter
 from app.bot.keyboards.reply import BTN_RAG_MEMORY
@@ -14,6 +15,9 @@ router = Router(name="rag_memory")
 NO_DOCUMENTS_LINE = "— пока пусто"
 NO_MEMORY_LINE = "— пока не о чем вспоминать, вы ещё не задавали вопросов"
 _PROMPT_PREVIEW_LEN = 100
+
+FIND_USAGE = "Использование: /find <текст для поиска>"
+_FIND_RESULT_LIMIT = 10
 
 
 @router.message(F.text == BTN_RAG_MEMORY, ShouldRespondFilter())
@@ -57,5 +61,45 @@ async def handle_rag_memory_overview(message: Message, db_user: User) -> None:
             lines.append(f"— {preview}")
     else:
         lines.append(NO_MEMORY_LINE)
+
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("find"))
+async def cmd_find(message: Message, command: CommandObject, db_user: User) -> None:
+    """Searches this user's own message history (their prompts AND Loki's
+    answers to them) — not a knowledge-base/RAG search, a personal-memory
+    search: "what did I already ask/get told about X". Scoped to db_user.id
+    for the same reason _load_recent_history (app/core/router.py) is: the
+    messages table has no chat_id, so there's no narrower scope available."""
+    if not command.args:
+        await message.answer(FIND_USAGE)
+        return
+
+    query = command.args.strip()
+    async with async_session_maker() as session:
+        matches = (
+            await session.execute(
+                select(MessageModel)
+                .where(
+                    MessageModel.user_id == db_user.id,
+                    or_(MessageModel.prompt.ilike(f"%{query}%"), MessageModel.response.ilike(f"%{query}%")),
+                )
+                .order_by(MessageModel.created_at.desc(), MessageModel.id.desc())
+                .limit(_FIND_RESULT_LIMIT)
+            )
+        ).scalars().all()
+
+    if not matches:
+        await message.answer(f"Ничего не нашёл по «{query}» в вашей истории.")
+        return
+
+    lines = [f"🔎 Найдено по «{query}»:"]
+    for m in matches:
+        prompt_preview = m.prompt[:_PROMPT_PREVIEW_LEN] + ("…" if len(m.prompt) > _PROMPT_PREVIEW_LEN else "")
+        response_preview = m.response[:_PROMPT_PREVIEW_LEN] + (
+            "…" if len(m.response) > _PROMPT_PREVIEW_LEN else ""
+        )
+        lines.append(f"— «{prompt_preview}»\n   → {response_preview}")
 
     await message.answer("\n".join(lines))

@@ -148,7 +148,11 @@ async def test_escalates_to_cloud_with_rag_context_when_local_cannot_answer():
     assert result["source"] == "cloud"
     assert result["context_used"] is True
     assert result["rag_debug"]["max_score"] == 0.9
-    cloud_llm.generate_with_usage.assert_awaited_once_with("вопрос", context="контекст документа")
+    # history is [] here: no real Postgres behind async_session_maker() in
+    # this unit test, so _load_recent_history's best-effort DB fetch fails
+    # and degrades to no memory for the turn (see test_router memory tests
+    # further down for the case where it's actually populated).
+    cloud_llm.generate_with_usage.assert_awaited_once_with("вопрос", context="контекст документа", history=[])
 
 
 @pytest.mark.asyncio
@@ -283,7 +287,7 @@ async def test_low_confidence_rag_answer_escalates_to_cloud_with_context():
     result = await router.process_query(user_id=1, prompt="вопрос")
 
     assert result["source"] == "cloud"
-    cloud_llm.generate_with_usage.assert_awaited_once_with("вопрос", context="контекст документа")
+    cloud_llm.generate_with_usage.assert_awaited_once_with("вопрос", context="контекст документа", history=[])
 
 
 @pytest.mark.asyncio

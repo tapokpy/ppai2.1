@@ -104,6 +104,31 @@ def test_no_proxy_by_default():
     assert anthropic_cls.call_args.kwargs["http_client"] is None
 
 
+@pytest.mark.asyncio
+async def test_generate_with_usage_prepends_history_before_current_turn():
+    client = CloudLLMClient(api_key="test-key", model="claude-3-5-sonnet-20241022")
+    create_mock = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="ok")],
+            usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+        )
+    )
+    client._client.messages.create = create_mock
+    history = [
+        {"role": "user", "content": "меня зовут Коля"},
+        {"role": "assistant", "content": "Приятно познакомиться, Коля!"},
+    ]
+
+    await client.generate("как меня зовут?", history=history)
+
+    sent_messages = create_mock.call_args.kwargs["messages"]
+    assert sent_messages == [
+        {"role": "user", "content": "меня зовут Коля"},
+        {"role": "assistant", "content": "Приятно познакомиться, Коля!"},
+        {"role": "user", "content": "как меня зовут?"},
+    ]
+
+
 def test_proxy_url_routes_through_http_client():
     with (
         patch("app.services.cloud_llm.anthropic.AsyncAnthropic") as anthropic_cls,

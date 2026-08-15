@@ -99,3 +99,37 @@ async def test_generate_escalates_to_cloud_on_error():
 def test_needs_cloud_detects_marker():
     assert LocalLLMClient.needs_cloud(f"текст {NEED_CLOUD_MARKER}") is True
     assert LocalLLMClient.needs_cloud("обычный ответ") is False
+
+
+@pytest.mark.asyncio
+async def test_generate_with_usage_inserts_history_between_system_and_prompt():
+    client = LocalLLMClient(base_url="http://localhost:11434", model="qwen2.5:7b")
+    client._client.chat = AsyncMock(return_value={"message": {"content": "ответ"}})
+    history = [
+        {"role": "user", "content": "меня зовут Коля"},
+        {"role": "assistant", "content": "Приятно познакомиться, Коля!"},
+    ]
+
+    await client.generate_with_usage("как меня зовут?", system_prompt="Ты ассистент.", history=history)
+
+    messages = client._client.chat.call_args.kwargs["messages"]
+    assert messages == [
+        {"role": "system", "content": "Ты ассистент."},
+        {"role": "user", "content": "меня зовут Коля"},
+        {"role": "assistant", "content": "Приятно познакомиться, Коля!"},
+        {"role": "user", "content": "как меня зовут?"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generate_with_usage_omits_history_key_when_not_given():
+    client = LocalLLMClient(base_url="http://localhost:11434", model="qwen2.5:7b")
+    client._client.chat = AsyncMock(return_value={"message": {"content": "ответ"}})
+
+    await client.generate_with_usage("Привет", system_prompt="Ты ассистент.")
+
+    messages = client._client.chat.call_args.kwargs["messages"]
+    assert messages == [
+        {"role": "system", "content": "Ты ассистент."},
+        {"role": "user", "content": "Привет"},
+    ]

@@ -5,6 +5,7 @@ from datetime import date
 
 from loguru import logger
 from redis.asyncio import Redis
+from sqlalchemy import select
 
 from app.core.capabilities import format_capabilities_for_user
 from app.core.config import settings
@@ -15,12 +16,23 @@ from app.core.prompt_manager import (
     get_system_prompt,
     is_capability_question,
 )
+from app.models.sqlalchemy.message import Message as MessageModel
 from app.services.audit import log_action
 from app.services.cloud_llm import CloudLLMClient, CloudUnavailableError
 from app.services.local_llm import LocalLLMClient
 from app.services.rag_engine import RAGEngine
 
 CONFIDENCE_PATTERN = re.compile(r"\[CONFIDENCE:\s*(high|medium|low)\]", re.IGNORECASE)
+
+# How many of the user's own past turns (each contributing a user+assistant
+# message pair) get replayed to the LLM as conversation memory. Kept small —
+# local inference is CPU-only and already the dominant cost in every
+# response, so this trades some recall depth for not making every message
+# noticeably slower. Each past response is truncated (below) so one verbose
+# answer (e.g. the full capabilities list, or a BOM table) doesn't crowd out
+# everything else in the window.
+HISTORY_TURNS = 8
+HISTORY_RESPONSE_CHAR_LIMIT = 500
 
 CLOUD_RATE_LIMIT_KEY = "cloud_usage:{user_id}:{day}"
 RATE_LIMIT_MESSAGE = (
@@ -93,6 +105,40 @@ class CascadeRouter:
         except Exception as exc:
             logger.warning(f"Audit logging failed for user {user_id}: {exc}")
 
+    @staticmethod
+    async def _load_recent_history(user_id: int) -> list[dict]:
+        """The last HISTORY_TURNS (prompt, response) rows for this user,
+        replayed as alternating user/assistant messages so the LLM sees
+        actual prior conversation instead of treating every message as a
+        cold start (e.g. "меня зовут Коля" -> next message "как меня
+        зовут?" previously had nothing to go on). Scoped to user_id, not a
+        specific chat — the messages table has no chat_id column, so this
+        is a user's whole history across every chat/DM they've used the
+        bot in, not just the current one.
+
+        Best-effort like _audit: any DB failure degrades to no memory for
+        this turn rather than breaking the response, and lets this be
+        exercised by unit tests that mock the LLM clients but have no real
+        database behind async_session_maker()."""
+        try:
+            async with async_session_maker() as session:
+                result = await session.execute(
+                    select(MessageModel)
+                    .where(MessageModel.user_id == user_id)
+                    .order_by(MessageModel.created_at.desc(), MessageModel.id.desc())
+                    .limit(HISTORY_TURNS)
+                )
+                rows = list(reversed(result.scalars().all()))
+        except Exception as exc:
+            logger.warning(f"Failed to load conversation history for user {user_id}: {exc}")
+            return []
+
+        history: list[dict] = []
+        for row in rows:
+            history.append({"role": "user", "content": row.prompt})
+            history.append({"role": "assistant", "content": row.response[:HISTORY_RESPONSE_CHAR_LIMIT]})
+        return history
+
     async def _process_query(self, user_id: int, prompt: str, use_cloud_override: bool) -> dict:
         # Per-phase timings (rag/local/cloud, in seconds) so the Telegram
         # metrics line can show *where* the total elapsed time actually went
@@ -107,10 +153,11 @@ class CascadeRouter:
         # actually produced the answer.
         trace_id = str(uuid.uuid4())
         events: list[dict] = []
+        history = await self._load_recent_history(user_id)
 
         if use_cloud_override:
             result = await self._call_cloud(
-                user_id, prompt, context=None, rag_debug=None, timing=timing, events=events
+                user_id, prompt, context=None, rag_debug=None, timing=timing, events=events, history=history
             )
             result["rag_trace_id"] = trace_id
             return result
@@ -172,7 +219,7 @@ class CascadeRouter:
             self._emit(events, "llm_called", {"model": self._local.model_name, "source": "local"})
             local_start = time.monotonic()
             text, llm_usage = await self._local.generate_with_usage(
-                prompt, system_prompt=f"{base_system_prompt}\n\nКонтекст:\n{context}"
+                prompt, system_prompt=f"{base_system_prompt}\n\nКонтекст:\n{context}", history=history
             )
             timing["local_seconds"] = round(time.monotonic() - local_start, 2)
             if text.strip() and not self._local.needs_cloud(text):
@@ -201,7 +248,9 @@ class CascadeRouter:
         else:
             self._emit(events, "llm_called", {"model": self._local.model_name, "source": "local"})
             local_start = time.monotonic()
-            text, llm_usage = await self._local.generate_with_usage(prompt, system_prompt=base_system_prompt)
+            text, llm_usage = await self._local.generate_with_usage(
+                prompt, system_prompt=base_system_prompt, history=history
+            )
             timing["local_seconds"] = round(time.monotonic() - local_start, 2)
             if text.strip() and not self._local.needs_cloud(text):
                 clean_text, confidence = self._extract_confidence(text)
@@ -224,7 +273,7 @@ class CascadeRouter:
                     }
 
         result = await self._call_cloud(
-            user_id, prompt, context=context, rag_debug=rag_debug, timing=timing, events=events
+            user_id, prompt, context=context, rag_debug=rag_debug, timing=timing, events=events, history=history
         )
         result["rag_trace_id"] = trace_id
         return result
@@ -254,6 +303,7 @@ class CascadeRouter:
         rag_debug: dict | None,
         timing: dict[str, float] | None = None,
         events: list[dict] | None = None,
+        history: list[dict] | None = None,
     ) -> dict:
         timing = timing if timing is not None else {}
         events = events if events is not None else []
@@ -287,7 +337,7 @@ class CascadeRouter:
         self._emit(events, "llm_called", {"model": self._cloud.model_name, "source": "cloud"})
         cloud_start = time.monotonic()
         try:
-            text, llm_usage = await self._cloud.generate_with_usage(prompt, context=context)
+            text, llm_usage = await self._cloud.generate_with_usage(prompt, context=context, history=history)
         except CloudUnavailableError as exc:
             timing["cloud_seconds"] = round(time.monotonic() - cloud_start, 2)
             logger.warning(f"Cloud LLM unavailable for user {user_id}: {exc}")

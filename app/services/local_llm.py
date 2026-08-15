@@ -37,18 +37,29 @@ class LocalLLMClient:
     def model_name(self) -> str:
         return self._model
 
-    async def generate(self, prompt: str, system_prompt: str | None = None) -> str:
-        text, _usage = await self.generate_with_usage(prompt, system_prompt)
+    async def generate(
+        self, prompt: str, system_prompt: str | None = None, history: list[dict] | None = None
+    ) -> str:
+        text, _usage = await self.generate_with_usage(prompt, system_prompt, history)
         return text
 
-    async def generate_with_usage(self, prompt: str, system_prompt: str | None = None) -> tuple[str, dict]:
+    async def generate_with_usage(
+        self, prompt: str, system_prompt: str | None = None, history: list[dict] | None = None
+    ) -> tuple[str, dict]:
         """Same as generate(), but also returns token-usage metrics (for the
         admin-only debug footer in Telegram) as
         {"prompt_tokens": int, "completion_tokens": int}. Usage is an empty
-        dict if the call failed (NEED_CLOUD_MARKER returned instead)."""
+        dict if the call failed (NEED_CLOUD_MARKER returned instead).
+
+        history is prior conversation turns as [{"role": "user"|"assistant",
+        "content": str}, ...] in chronological order, inserted between the
+        system prompt and the current prompt — see
+        CascadeRouter._load_recent_history, the only real caller."""
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
+        if history:
+            messages.extend(history)
         messages.append({"role": "user", "content": prompt})
 
         try:
