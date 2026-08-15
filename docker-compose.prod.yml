@@ -95,6 +95,14 @@ services:
       # Baked into the image (Dockerfile.bot) — not a host-provided path
       # like the others above, but set the same way for consistency.
       ODA_FILE_CONVERTER_PATH: /usr/local/bin/oda-convert.sh
+      # faster-whisper/huggingface_hub default to caching downloaded model
+      # weights under /root/.cache, which lives in the container's own
+      # ephemeral filesystem — every rebuild/redeploy silently re-downloads
+      # the ~550MB Whisper model from scratch on the first voice message
+      # after restart, adding a minute-plus of pure download time on top of
+      # actual transcription. Redirecting the cache into the already-
+      # persistent app_data volume makes the download happen once, ever.
+      HF_HOME: /app/data/hf_cache
     volumes:
       - app_data:/app/data
       # Real showroom media library on the host (e.g. D:/Pappai_Media on

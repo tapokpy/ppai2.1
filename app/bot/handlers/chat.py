@@ -186,6 +186,12 @@ async def handle_text(message: Message, cascade_router: CascadeRouter, db_user: 
 async def handle_voice(
     message: Message, cascade_router: CascadeRouter, db_user: User, bot: Bot, transcriber: Transcriber
 ) -> None:
+    # Transcription (CPU Whisper) can itself take a while, separately from
+    # the LLM cascade afterward — without this, a voice message produced no
+    # visible reaction at all until both steps finished, which read as "no
+    # response" even though the bot was working the whole time.
+    listening_placeholder = await message.answer("🎙 Распознаю голосовое сообщение...")
+
     file = await bot.get_file(message.voice.file_id)
     VOICE_TEMP_DIR.mkdir(parents=True, exist_ok=True)
     local_path = VOICE_TEMP_DIR / f"voice_{uuid4().hex}.ogg"
@@ -196,9 +202,19 @@ async def handle_voice(
     finally:
         local_path.unlink(missing_ok=True)
 
+    try:
+        await listening_placeholder.delete()
+    except Exception as exc:
+        logger.warning(f"Failed to delete voice-listening placeholder: {exc}")
+
     if not transcript.strip():
         await message.answer("Не удалось распознать голосовое сообщение. Попробуйте ещё раз или напишите текстом.")
         return
+
+    # Shown as its own message (not folded into the final answer) so the
+    # user can tell right away whether Whisper heard them correctly, before
+    # waiting on the LLM cascade for the actual answer.
+    await message.answer(f"🎧 Распознано: «{transcript}»")
 
     await _process_and_reply(message, cascade_router, db_user, transcript, message_type="voice")
 

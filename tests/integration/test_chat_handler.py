@@ -281,6 +281,11 @@ async def test_handle_voice_transcribes_and_replies(clean_db):
     cascade_router.process_query.assert_awaited_once_with(
         user_id=user.id, prompt="Расскажи про шаг пикселя"
     )
+    # Listening placeholder -> recognized-text message -> thinking placeholder -> answer.
+    assert message.answer.await_count == 4
+    assert message.answer.await_args_list[0].args[0] == "🎙 Распознаю голосовое сообщение..."
+    assert message.answer.await_args_list[1].args[0] == "🎧 Распознано: «Расскажи про шаг пикселя»"
+    assert message.answer.await_args_list[2].args[0] == THINKING_PLACEHOLDER
     assert message.answer.call_args.args[0] == "⏱ 3.5с\n\nОтвет бота"
 
     async with async_session_maker() as session:
@@ -315,9 +320,12 @@ async def test_handle_voice_reports_when_transcription_empty(clean_db):
     await handle_voice(message, cascade_router, user, bot, transcriber)
 
     cascade_router.process_query.assert_not_awaited()
-    # No placeholder for this path — it returns before calling
-    # _process_and_reply at all (nothing to transcribe).
-    message.answer.assert_awaited_once()
+    # Listening placeholder still shown and cleaned up, but it returns
+    # before calling _process_and_reply at all (nothing to transcribe).
+    assert message.answer.await_count == 2
+    assert message.answer.await_args_list[0].args[0] == "🎙 Распознаю голосовое сообщение..."
+    placeholder = message.answer.return_value
+    placeholder.delete.assert_awaited()
     assert "не удалось распознать" in message.answer.call_args.args[0].lower()
 
     async with async_session_maker() as session:
