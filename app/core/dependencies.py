@@ -10,7 +10,7 @@ from app.services.media_downloader import MediaDownloader
 from app.services.rag_engine import RAGEngine
 from app.services.resolume_controller import ResolumeController, ScreensMap
 from app.services.stt import Transcriber
-from app.services.tools import calculate_power_tool, download_youtube_tool
+from app.services.tools import calculate_power_tool, download_youtube_tool, find_history_tool
 
 
 def build_transcriber() -> Transcriber:
@@ -45,6 +45,7 @@ def build_tool_registry(media_downloader: MediaDownloader) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(calculate_power_tool.TOOL_SPEC)
     registry.register(download_youtube_tool.build_tool_spec(media_downloader))
+    registry.register(find_history_tool.TOOL_SPEC)
     # generate_image/create_chart join here once a provider is chosen /
     # the chart service is built — see the tool-calling plan, Фаза 4.
     return registry

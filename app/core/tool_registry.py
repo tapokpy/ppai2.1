@@ -37,6 +37,11 @@ class ToolSpec:
     parameters: list[ToolParameter]
     handler: Callable[..., Awaitable[ToolResult]]
     admin_only: bool = False
+    # True for tools that must be scoped to the calling user (e.g. searching
+    # *their* conversation history) — the router passes user_id as an extra
+    # kwarg on dispatch. Never an LLM-supplied argument: the model must not
+    # be able to choose which user's data a tool call reads.
+    needs_user_id: bool = False
 
     def to_ollama_function(self) -> dict:
         properties = {

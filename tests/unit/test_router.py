@@ -707,6 +707,36 @@ async def test_fallback_path_treats_non_json_response_as_plain_text():
 
 
 @pytest.mark.asyncio
+async def test_needs_user_id_tool_receives_real_user_id_not_model_supplied_one():
+    handler = AsyncMock(return_value=ToolResult(text="результат"))
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="find_history",
+            description="test",
+            parameters=[ToolParameter(name="query", type="string", description="x")],
+            handler=handler,
+            needs_user_id=True,
+        )
+    )
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False,
+        tool_registry=registry,
+        # Model tries to smuggle a different user_id in its own arguments —
+        # the router must overwrite it with the real calling user, not trust it.
+        local_tool_calls=[{"name": "find_history", "arguments": {"query": "x", "user_id": 999}}],
+    )
+
+    with (
+        patch("app.core.router.settings.TOOLS_ENABLED", True),
+        patch("app.core.router.settings.TOOLS_USE_NATIVE_OLLAMA", True),
+    ):
+        await router.process_query(user_id=1, prompt="найди в истории X")
+
+    handler.assert_awaited_once_with(query="x", user_id=1)
+
+
+@pytest.mark.asyncio
 async def test_no_tools_registered_skips_tool_path_even_when_enabled():
     router, rag_engine, local_llm, cloud_llm, redis_client = make_router(rag_found=False)
 

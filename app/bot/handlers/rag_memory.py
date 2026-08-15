@@ -1,7 +1,7 @@
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 
 from app.bot.filters import ShouldRespondFilter
 from app.bot.keyboards.reply import BTN_RAG_MEMORY
@@ -9,6 +9,7 @@ from app.core.database import async_session_maker
 from app.models.sqlalchemy.document import Document
 from app.models.sqlalchemy.message import Message as MessageModel
 from app.models.sqlalchemy.user import User
+from app.services.history_search import search_messages
 
 router = Router(name="rag_memory")
 
@@ -67,28 +68,12 @@ async def handle_rag_memory_overview(message: Message, db_user: User) -> None:
 
 @router.message(Command("find"))
 async def cmd_find(message: Message, command: CommandObject, db_user: User) -> None:
-    """Searches this user's own message history (their prompts AND Loki's
-    answers to them) — not a knowledge-base/RAG search, a personal-memory
-    search: "what did I already ask/get told about X". Scoped to db_user.id
-    for the same reason _load_recent_history (app/core/router.py) is: the
-    messages table has no chat_id, so there's no narrower scope available."""
     if not command.args:
         await message.answer(FIND_USAGE)
         return
 
     query = command.args.strip()
-    async with async_session_maker() as session:
-        matches = (
-            await session.execute(
-                select(MessageModel)
-                .where(
-                    MessageModel.user_id == db_user.id,
-                    or_(MessageModel.prompt.ilike(f"%{query}%"), MessageModel.response.ilike(f"%{query}%")),
-                )
-                .order_by(MessageModel.created_at.desc(), MessageModel.id.desc())
-                .limit(_FIND_RESULT_LIMIT)
-            )
-        ).scalars().all()
+    matches = await search_messages(db_user.id, query, limit=_FIND_RESULT_LIMIT)
 
     if not matches:
         await message.answer(f"Ничего не нашёл по «{query}» в вашей истории.")

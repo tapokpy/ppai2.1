@@ -217,8 +217,11 @@ class CascadeRouter:
 
         self._emit(events, "tool_called", {"tool": name, "arguments": arguments})
         tool_start = time.monotonic()
+        call_kwargs = dict(arguments)
+        if spec.needs_user_id:
+            call_kwargs["user_id"] = user_id
         try:
-            result = await spec.handler(**arguments)
+            result = await spec.handler(**call_kwargs)
         except TypeError as exc:
             # Malformed/missing arguments from the model — surfaced like any
             # other tool failure instead of raising into the user.
