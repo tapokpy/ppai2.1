@@ -213,7 +213,7 @@ async def test_ask_cloud_callback_reprocesses_via_cloud(clean_db):
     # Timing is shown to every user (not just admins); no admin debug line
     # since this user isn't an admin, and no keyboard is attached (removed
     # per explicit user request).
-    assert callback.message.answer.call_args.args[0] == "⏱ 4.1с\n\nОблачный ответ"
+    assert callback.message.answer.call_args.args[0] == "Облачный ответ\n\n┄┄┄┄┄┄┄┄┄┄\n⏱ 4.1с"
     assert callback.message.answer.call_args.kwargs == {}
 
     async with async_session_maker() as session:

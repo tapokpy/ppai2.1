@@ -737,6 +737,37 @@ async def test_needs_user_id_tool_receives_real_user_id_not_model_supplied_one()
 
 
 @pytest.mark.asyncio
+async def test_confidence_instruction_is_stripped_when_tools_are_offered():
+    # Live-tested: qwen2.5:7b reliably breaks tool-calling when asked to
+    # also append a [CONFIDENCE: ...] marker in the same turn — it produces
+    # a garbled hybrid (tool name/JSON as plain text) instead of a clean
+    # native tool call for a real fraction of tool-eligible prompts.
+    registry, handler = _fake_tool_registry()
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False, tool_registry=registry
+    )
+
+    with (
+        patch("app.core.router.settings.TOOLS_ENABLED", True),
+        patch("app.core.router.settings.TOOLS_USE_NATIVE_OLLAMA", True),
+    ):
+        await router.process_query(user_id=1, prompt="вопрос")
+
+    system_prompt = local_llm.generate_with_tools.call_args.kwargs["system_prompt"]
+    assert "[CONFIDENCE:" not in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_confidence_instruction_still_present_when_tools_disabled():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(rag_found=False)
+
+    await router.process_query(user_id=1, prompt="вопрос")
+
+    system_prompt = local_llm.generate_with_usage.call_args.kwargs["system_prompt"]
+    assert "[CONFIDENCE:" in system_prompt
+
+
+@pytest.mark.asyncio
 async def test_no_tools_registered_skips_tool_path_even_when_enabled():
     router, rag_engine, local_llm, cloud_llm, redis_client = make_router(rag_found=False)
 

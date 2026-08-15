@@ -169,12 +169,25 @@ class CascadeRouter:
             text, usage = await self._local.generate_with_usage(prompt, system_prompt=system_prompt, history=history)
             return text, [], usage
 
+        # CONFIDENCE_INSTRUCTION asks the model to end every text answer with
+        # a [CONFIDENCE: ...] marker — live-tested (repeatedly, against this
+        # exact model/server) to conflict with tool-calling: qwen2.5:7b would
+        # try to satisfy both instructions at once and emit a garbled hybrid
+        # (the tool name/JSON as plain text, sometimes with the marker glued
+        # on) instead of a clean native tool call, for a real fraction of
+        # tool-eligible prompts — e.g. "как меня зовут?" reliably degraded
+        # from a clean find_history call to broken text once this instruction
+        # was present. Stripped only for this tool-offering call; harmless to
+        # drop since CLOUD_ENABLED is False in this deployment anyway, so the
+        # confidence-based escalation it feeds is already inert.
+        tool_system_prompt = system_prompt.replace(CONFIDENCE_INSTRUCTION, "")
+
         if settings.TOOLS_USE_NATIVE_OLLAMA:
             return await self._local.generate_with_tools(
-                prompt, tools=tools_schema, system_prompt=system_prompt, history=history
+                prompt, tools=tools_schema, system_prompt=tool_system_prompt, history=history
             )
 
-        fallback_system_prompt = f"{system_prompt}\n\n{self._tools.to_prompt_block(is_admin)}"
+        fallback_system_prompt = f"{tool_system_prompt}\n\n{self._tools.to_prompt_block(is_admin)}"
         text, usage = await self._local.generate_with_usage(
             prompt, system_prompt=fallback_system_prompt, history=history
         )

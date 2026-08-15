@@ -33,7 +33,8 @@ _CONFIDENCE_EMOJI = {"high": "✅", "medium": "⚠️", "low": "❓"}
 
 
 def _basic_metrics_line(result: dict) -> str:
-    """Response time + confidence — shown to every user, before the answer.
+    """Response time + confidence — shown to every user, as a footer below
+    the answer (see _format_reply).
 
     Settled by explicit user decision in chat (confirmed twice, in writing,
     after conflicting concurrent edits from another session kept reverting
@@ -92,7 +93,14 @@ def _admin_debug_line(result: dict) -> str:
     return "🔧 " + " · ".join(parts)
 
 
+_FOOTER_DIVIDER = "┄┄┄┄┄┄┄┄┄┄"
+
+
 def _format_reply(result: dict, db_user: User) -> str:
+    # Answer first, metrics as a clearly-separated footer below it — moved
+    # here (was above the answer) per explicit user request in chat: a
+    # metrics line ahead of the answer read as noise before the actual
+    # content, a footer after it reads as a label/signature instead.
     lines = [line for line in [_basic_metrics_line(result)] if line]
 
     if is_admin(db_user.telegram_id):
@@ -103,7 +111,7 @@ def _format_reply(result: dict, db_user: User) -> str:
     if not lines:
         return result["text"]
 
-    return "\n".join(lines) + f"\n\n{result['text']}"
+    return f"{result['text']}\n\n{_FOOTER_DIVIDER}\n" + "\n".join(lines)
 
 
 def _build_message_model(db_user: User, telegram_message_id: int, prompt: str, result: dict) -> MessageModel:

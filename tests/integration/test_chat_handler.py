@@ -73,9 +73,9 @@ async def test_handle_text_saves_history_and_replies(clean_db):
         await handle_text(message, cascade_router, user)
 
     cascade_router.process_query.assert_awaited_once_with(user_id=user.id, prompt="Привет", is_admin=False)
-    # Every user (not just admins) sees the timing line before the answer.
+    # Every user (not just admins) sees the timing line, as a footer after the answer.
     # No keyboard is attached (removed per explicit user request).
-    assert message.answer.call_args.args[0] == "⏱ 1.23с\n\nОтвет бота"
+    assert message.answer.call_args.args[0] == "Ответ бота\n\n┄┄┄┄┄┄┄┄┄┄\n⏱ 1.23с"
     assert message.answer.call_args.kwargs == {}
 
     async with async_session_maker() as session:
@@ -85,7 +85,7 @@ async def test_handle_text_saves_history_and_replies(clean_db):
     assert len(messages) == 1
     assert messages[0].source == "local"
     assert messages[0].prompt == "Привет"
-    # DB stores the raw answer text; the metrics prefix is a display-only concern.
+    # DB stores the raw answer text; the metrics footer is a display-only concern.
     assert messages[0].response == "Ответ бота"
     assert len(logs) == 1
     assert logs[0].chat_id == 999
@@ -116,7 +116,7 @@ async def test_handle_text_shows_confidence_emoji_alongside_timing(clean_db):
         settings_mock.admin_ids = []
         await handle_text(message, cascade_router, user)
 
-    assert message.answer.call_args.args[0] == "⏱ 0.8с · ⚠️ medium\n\nСечение кабеля 4 кв.мм"
+    assert message.answer.call_args.args[0] == "Сечение кабеля 4 кв.мм\n\n┄┄┄┄┄┄┄┄┄┄\n⏱ 0.8с · ⚠️ medium"
 
 
 @pytest.mark.asyncio
@@ -147,11 +147,12 @@ async def test_handle_text_shows_extra_debug_line_to_admin(clean_db):
         await handle_text(message, cascade_router, user)
 
     reply = message.answer.call_args.args[0]
-    # Everyone-visible line first, then the admin-only diagnostic line, then the answer.
+    # Answer first, then the footer: everyone-visible line, then admin-only diagnostic line.
     assert reply == (
+        "Сечение кабеля 4 кв.мм\n\n"
+        "┄┄┄┄┄┄┄┄┄┄\n"
         "⏱ 0.8с · ⚠️ medium\n"
-        "🔧 rag · score 0.91 · 120+45 ток\n\n"
-        "Сечение кабеля 4 кв.мм"
+        "🔧 rag · score 0.91 · 120+45 ток"
     )
 
 
@@ -185,9 +186,10 @@ async def test_handle_text_shows_timing_breakdown_to_admin(clean_db):
 
     reply = message.answer.call_args.args[0]
     assert reply == (
+        "Сечение кабеля 4 кв.мм\n\n"
+        "┄┄┄┄┄┄┄┄┄┄\n"
         "⏱ 74.36с · ❓ low\n"
-        "🔧 rag · rag 0.02с + llm 74.3с · score 0.90\n\n"
-        "Сечение кабеля 4 кв.мм"
+        "🔧 rag · rag 0.02с + llm 74.3с · score 0.90"
     )
 
 
@@ -286,7 +288,7 @@ async def test_handle_voice_transcribes_and_replies(clean_db):
     assert message.answer.await_args_list[0].args[0] == "🎙 Распознаю голосовое сообщение..."
     assert message.answer.await_args_list[1].args[0] == "🎧 Распознано: «Расскажи про шаг пикселя»"
     assert message.answer.await_args_list[2].args[0] == THINKING_PLACEHOLDER
-    assert message.answer.call_args.args[0] == "⏱ 3.5с\n\nОтвет бота"
+    assert message.answer.call_args.args[0] == "Ответ бота\n\n┄┄┄┄┄┄┄┄┄┄\n⏱ 3.5с"
 
     async with async_session_maker() as session:
         messages = (await session.execute(select(MessageModel))).scalars().all()
