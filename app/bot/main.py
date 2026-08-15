@@ -31,6 +31,7 @@ from app.core.dependencies import (
     build_media_downloader,
     build_resolume_controller,
     build_screens_map,
+    build_tool_registry,
     build_transcriber,
 )
 from app.core.scheduler import ReminderScheduler
@@ -100,9 +101,10 @@ def build_dispatcher() -> Dispatcher:
 async def main() -> None:
     bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = build_dispatcher()
-    cascade_router = build_cascade_router()
     transcriber = build_transcriber()
     media_downloader = build_media_downloader()
+    tool_registry = build_tool_registry(media_downloader)
+    cascade_router = build_cascade_router(tool_registry=tool_registry)
     resolume_controller = build_resolume_controller()
     screens_map = build_screens_map()
 

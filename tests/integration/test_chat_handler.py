@@ -72,7 +72,7 @@ async def test_handle_text_saves_history_and_replies(clean_db):
         settings_mock.admin_ids = []
         await handle_text(message, cascade_router, user)
 
-    cascade_router.process_query.assert_awaited_once_with(user_id=user.id, prompt="Привет")
+    cascade_router.process_query.assert_awaited_once_with(user_id=user.id, prompt="Привет", is_admin=False)
     # Every user (not just admins) sees the timing line before the answer.
     # No keyboard is attached (removed per explicit user request).
     assert message.answer.call_args.args[0] == "⏱ 1.23с\n\nОтвет бота"
@@ -279,7 +279,7 @@ async def test_handle_voice_transcribes_and_replies(clean_db):
     bot.get_file.assert_awaited_once_with("abc")
     transcriber.transcribe.assert_awaited_once()
     cascade_router.process_query.assert_awaited_once_with(
-        user_id=user.id, prompt="Расскажи про шаг пикселя"
+        user_id=user.id, prompt="Расскажи про шаг пикселя", is_admin=False
     )
     # Listening placeholder -> recognized-text message -> thinking placeholder -> answer.
     assert message.answer.await_count == 4

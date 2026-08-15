@@ -4,6 +4,7 @@ import pytest
 from fakeredis.aioredis import FakeRedis
 
 from app.core.router import CLOUD_DISABLED_MESSAGE, CLOUD_UNAVAILABLE_MESSAGE, RATE_LIMIT_MESSAGE, CascadeRouter
+from app.core.tool_registry import ToolParameter, ToolRegistry, ToolResult, ToolSpec
 from app.services.cloud_llm import CloudUnavailableError
 from app.services.local_llm import LocalLLMClient
 
@@ -17,6 +18,8 @@ def make_router(
     local_usage: dict | None = None,
     cloud_usage: dict | None = None,
     cloud_enabled: bool = True,
+    tool_registry: ToolRegistry | None = None,
+    local_tool_calls: list[dict] | None = None,
 ):
     documents = rag_documents or []
     rag_engine = MagicMock()
@@ -33,6 +36,9 @@ def make_router(
     local_llm = MagicMock()
     local_llm.model_name = "qwen2.5:7b"
     local_llm.generate_with_usage = AsyncMock(return_value=(local_response, local_usage or {}))
+    local_llm.generate_with_tools = AsyncMock(
+        return_value=(local_response, local_tool_calls or [], local_usage or {})
+    )
     local_llm.needs_cloud = LocalLLMClient.needs_cloud
 
     cloud_llm = MagicMock()
@@ -48,6 +54,7 @@ def make_router(
         redis_client=redis_client,
         cloud_daily_limit=daily_limit,
         cloud_enabled=cloud_enabled,
+        tool_registry=tool_registry,
     )
     return router, rag_engine, local_llm, cloud_llm, redis_client
 
@@ -524,3 +531,191 @@ async def test_composes_system_prompt_from_detected_type_and_confidence_instruct
     system_prompt = local_llm.generate_with_usage.call_args.kwargs["system_prompt"]
     assert "калькулятор" in system_prompt.lower()
     assert "[CONFIDENCE:" in system_prompt
+
+
+def _fake_tool_registry(admin_only: bool = False, success: bool = True) -> tuple[ToolRegistry, AsyncMock]:
+    handler = AsyncMock(
+        return_value=ToolResult(
+            text="Готово: 20 модулей",
+            success=success,
+            error=None if success else "boom",
+            structured_data={"kind": "power_calculation"} if success else None,
+        )
+    )
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="calculate_power",
+            description="test",
+            parameters=[ToolParameter(name="module_count", type="integer", description="x")],
+            handler=handler,
+            admin_only=admin_only,
+        )
+    )
+    return registry, handler
+
+
+@pytest.mark.asyncio
+async def test_tools_disabled_by_default_never_calls_generate_with_tools():
+    registry, handler = _fake_tool_registry()
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False, tool_registry=registry
+    )
+
+    result = await router.process_query(user_id=1, prompt="посчитай питание для 20 модулей")
+
+    local_llm.generate_with_tools.assert_not_called()
+    local_llm.generate_with_usage.assert_awaited_once()
+    handler.assert_not_called()
+    assert result["source"] == "local"
+
+
+@pytest.mark.asyncio
+async def test_native_tool_call_dispatches_to_registered_handler():
+    registry, handler = _fake_tool_registry()
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False,
+        tool_registry=registry,
+        local_tool_calls=[{"name": "calculate_power", "arguments": {"module_count": 20}}],
+    )
+
+    with (
+        patch("app.core.router.settings.TOOLS_ENABLED", True),
+        patch("app.core.router.settings.TOOLS_USE_NATIVE_OLLAMA", True),
+    ):
+        result = await router.process_query(user_id=1, prompt="посчитай питание для 20 модулей")
+
+    handler.assert_awaited_once_with(module_count=20)
+    local_llm.generate_with_tools.assert_awaited_once()
+    cloud_llm.generate_with_usage.assert_not_called()
+    assert result["source"] == "tool"
+    assert result["text"] == "Готово: 20 модулей"
+    assert result["structured_data"] == {"kind": "power_calculation"}
+
+
+@pytest.mark.asyncio
+async def test_tool_call_naming_admin_only_tool_is_denied_for_non_admin():
+    # Two tools registered — a public one (so the catalog shown to the
+    # model isn't empty and generate_with_tools actually fires) plus an
+    # admin-only one the model "hallucinates" a call to despite it never
+    # being in the schema it was shown. Exercises the server-side re-check
+    # (app/core/router.py::_dispatch_tool_call) as defense in depth.
+    registry, public_handler = _fake_tool_registry()
+    admin_handler = AsyncMock(return_value=ToolResult(text="секрет", success=True))
+    registry.register(
+        ToolSpec(
+            name="admin_tool",
+            description="test",
+            parameters=[],
+            handler=admin_handler,
+            admin_only=True,
+        )
+    )
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False,
+        tool_registry=registry,
+        local_tool_calls=[{"name": "admin_tool", "arguments": {}}],
+    )
+
+    with (
+        patch("app.core.router.settings.TOOLS_ENABLED", True),
+        patch("app.core.router.settings.TOOLS_USE_NATIVE_OLLAMA", True),
+    ):
+        result = await router.process_query(user_id=1, prompt="посчитай", is_admin=False)
+
+    admin_handler.assert_not_called()
+    public_handler.assert_not_called()
+    assert result["source"] == "tool_denied"
+
+
+@pytest.mark.asyncio
+async def test_tool_call_naming_admin_only_tool_dispatches_for_admin():
+    registry, handler = _fake_tool_registry(admin_only=True)
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False,
+        tool_registry=registry,
+        local_tool_calls=[{"name": "calculate_power", "arguments": {"module_count": 20}}],
+    )
+
+    with (
+        patch("app.core.router.settings.TOOLS_ENABLED", True),
+        patch("app.core.router.settings.TOOLS_USE_NATIVE_OLLAMA", True),
+    ):
+        result = await router.process_query(user_id=1, prompt="посчитай", is_admin=True)
+
+    handler.assert_awaited_once()
+    assert result["source"] == "tool"
+
+
+@pytest.mark.asyncio
+async def test_tool_handler_failure_is_reported_without_raising():
+    registry, handler = _fake_tool_registry(success=False)
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False,
+        tool_registry=registry,
+        local_tool_calls=[{"name": "calculate_power", "arguments": {"module_count": 0}}],
+    )
+
+    with (
+        patch("app.core.router.settings.TOOLS_ENABLED", True),
+        patch("app.core.router.settings.TOOLS_USE_NATIVE_OLLAMA", True),
+    ):
+        result = await router.process_query(user_id=1, prompt="посчитай")
+
+    assert result["source"] == "tool"
+    assert result["structured_data"] is None
+
+
+@pytest.mark.asyncio
+async def test_fallback_prompt_json_path_dispatches_when_native_disabled():
+    registry, handler = _fake_tool_registry()
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False,
+        tool_registry=registry,
+        local_response='{"tool": "calculate_power", "arguments": {"module_count": 20}}',
+    )
+
+    with (
+        patch("app.core.router.settings.TOOLS_ENABLED", True),
+        patch("app.core.router.settings.TOOLS_USE_NATIVE_OLLAMA", False),
+    ):
+        result = await router.process_query(user_id=1, prompt="посчитай питание для 20 модулей")
+
+    local_llm.generate_with_tools.assert_not_called()
+    local_llm.generate_with_usage.assert_awaited_once()
+    assert "calculate_power" in local_llm.generate_with_usage.call_args.kwargs["system_prompt"]
+    handler.assert_awaited_once_with(module_count=20)
+    assert result["source"] == "tool"
+
+
+@pytest.mark.asyncio
+async def test_fallback_path_treats_non_json_response_as_plain_text():
+    registry, handler = _fake_tool_registry()
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(
+        rag_found=False, tool_registry=registry, local_response="Обычный текстовый ответ"
+    )
+
+    with (
+        patch("app.core.router.settings.TOOLS_ENABLED", True),
+        patch("app.core.router.settings.TOOLS_USE_NATIVE_OLLAMA", False),
+    ):
+        result = await router.process_query(user_id=1, prompt="вопрос")
+
+    handler.assert_not_called()
+    assert result["source"] == "local"
+    assert result["text"] == "Обычный текстовый ответ"
+
+
+@pytest.mark.asyncio
+async def test_no_tools_registered_skips_tool_path_even_when_enabled():
+    router, rag_engine, local_llm, cloud_llm, redis_client = make_router(rag_found=False)
+
+    with (
+        patch("app.core.router.settings.TOOLS_ENABLED", True),
+        patch("app.core.router.settings.TOOLS_USE_NATIVE_OLLAMA", True),
+    ):
+        result = await router.process_query(user_id=1, prompt="вопрос")
+
+    local_llm.generate_with_tools.assert_not_called()
+    local_llm.generate_with_usage.assert_awaited_once()
+    assert result["source"] == "local"

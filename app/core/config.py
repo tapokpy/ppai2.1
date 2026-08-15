@@ -106,6 +106,22 @@ class Settings(BaseSettings):
     # "проект3 <ID>" upload caption (app/bot/handlers/documents.py).
     PROJECT_FILES_PATH: str = "./data/project_files"
 
+    # Tool calling (Локи calls Python functions instead of just answering in
+    # text — e.g. "скачай это видео <url>" -> download_youtube). Off by
+    # default until deployed and verified, same pattern as CLOUD_ENABLED.
+    # TOOLS_USE_NATIVE_OLLAMA: live-tested in production against this exact
+    # model/server/system-prompt combination (ollama==0.4.1 client,
+    # qwen2.5:7b, Ollama server 0.32.9) — 8/8 test prompts across both tool
+    # and non-tool cases picked correctly and consistently, so native
+    # tools= is the default. False falls back to the prompt+JSON pattern
+    # already used by the four *_parser.py modules.
+    TOOLS_ENABLED: bool = False
+    TOOLS_USE_NATIVE_OLLAMA: bool = True
+    # Empty = generate_image tool disabled/hidden, same pattern as
+    # ANTHROPIC_API_KEY. Provider not chosen yet (OpenAI/Stability/other).
+    IMAGE_GEN_API_KEY: str = ""
+    IMAGE_GEN_PROVIDER: str = ""
+
     @property
     def admin_ids(self) -> list[int]:
         return [int(x) for x in self.ADMIN_IDS.split(",") if x.strip()]

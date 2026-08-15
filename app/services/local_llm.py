@@ -77,3 +77,44 @@ class LocalLLMClient:
     @staticmethod
     def needs_cloud(response_text: str) -> bool:
         return NEED_CLOUD_MARKER in response_text
+
+    async def generate_with_tools(
+        self,
+        prompt: str,
+        tools: list[dict],
+        system_prompt: str | None = None,
+        history: list[dict] | None = None,
+    ) -> tuple[str, list[dict], dict]:
+        """Same shape as generate_with_usage, but passes `tools` (Ollama/
+        OpenAI-style function schemas — see ToolRegistry.to_ollama_schema)
+        so the model can respond with a tool call instead of plain text.
+
+        Returns (text, tool_calls, usage). tool_calls is a normalized list
+        of {"name": str, "arguments": dict}, empty when the model answered
+        normally instead of calling a tool. See CascadeRouter._process_query,
+        the only real caller."""
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            response = await self._client.chat(
+                model=self._model, messages=messages, tools=tools, options=self._options
+            )
+        except Exception as exc:
+            logger.warning(f"Local LLM tool-calling call failed, escalating to cloud: {exc}")
+            return NEED_CLOUD_MARKER, [], {}
+
+        usage = {
+            "prompt_tokens": response.get("prompt_eval_count"),
+            "completion_tokens": response.get("eval_count"),
+        }
+        message = response["message"]
+        tool_calls = [
+            {"name": call["function"]["name"], "arguments": dict(call["function"]["arguments"])}
+            for call in (message.get("tool_calls") or [])
+        ]
+        return message.get("content") or "", tool_calls, usage

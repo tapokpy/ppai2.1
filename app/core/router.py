@@ -16,6 +16,7 @@ from app.core.prompt_manager import (
     get_system_prompt,
     is_capability_question,
 )
+from app.core.tool_registry import ToolRegistry, ToolResult, try_parse_json
 from app.models.sqlalchemy.message import Message as MessageModel
 from app.services.audit import log_action
 from app.services.cloud_llm import CloudLLMClient, CloudUnavailableError
@@ -57,6 +58,7 @@ class CascadeRouter:
         redis_client: Redis,
         cloud_daily_limit: int,
         cloud_enabled: bool = True,
+        tool_registry: ToolRegistry | None = None,
     ):
         self._rag = rag_engine
         self._local = local_llm
@@ -64,6 +66,7 @@ class CascadeRouter:
         self._redis = redis_client
         self._cloud_daily_limit = cloud_daily_limit
         self._cloud_enabled = cloud_enabled
+        self._tools = tool_registry or ToolRegistry()
 
     @property
     def rag_engine(self) -> RAGEngine:
@@ -73,10 +76,12 @@ class CascadeRouter:
     def local_llm(self) -> LocalLLMClient:
         return self._local
 
-    async def process_query(self, user_id: int, prompt: str, use_cloud_override: bool = False) -> dict:
+    async def process_query(
+        self, user_id: int, prompt: str, use_cloud_override: bool = False, is_admin: bool = False
+    ) -> dict:
         start = time.monotonic()
         try:
-            result = await self._process_query(user_id, prompt, use_cloud_override)
+            result = await self._process_query(user_id, prompt, use_cloud_override, is_admin)
         except Exception as exc:
             await self._audit(user_id, prompt, decision="exception", status="error", detail={"error": str(exc)})
             raise
@@ -139,7 +144,111 @@ class CascadeRouter:
             history.append({"role": "assistant", "content": row.response[:HISTORY_RESPONSE_CHAR_LIMIT]})
         return history
 
-    async def _process_query(self, user_id: int, prompt: str, use_cloud_override: bool) -> dict:
+    async def _generate_with_optional_tools(
+        self, prompt: str, system_prompt: str, history: list[dict], is_admin: bool
+    ) -> tuple[str, list[dict], dict]:
+        """Runs the one local-LLM call each pipeline branch already makes,
+        additionally letting the model call a tool instead of answering in
+        text when TOOLS_ENABLED. Returns (text, tool_calls, usage) —
+        tool_calls is empty whenever tools are off, no tool applies to this
+        user, or the model just answered normally.
+
+        TOOLS_USE_NATIVE_OLLAMA picks between Ollama's native tools=
+        (verified live against this exact model/server/system-prompt
+        combination — see capabilities in the tool-calling plan) and the
+        fallback prompt+JSON pattern already proven by the four
+        app/core/*_parser.py modules, kept as a config-flippable safety net
+        without needing a redeploy if native tool-calling misbehaves later
+        under traffic this session's spike didn't cover."""
+        if not settings.TOOLS_ENABLED:
+            text, usage = await self._local.generate_with_usage(prompt, system_prompt=system_prompt, history=history)
+            return text, [], usage
+
+        tools_schema = self._tools.to_ollama_schema(is_admin)
+        if not tools_schema:
+            text, usage = await self._local.generate_with_usage(prompt, system_prompt=system_prompt, history=history)
+            return text, [], usage
+
+        if settings.TOOLS_USE_NATIVE_OLLAMA:
+            return await self._local.generate_with_tools(
+                prompt, tools=tools_schema, system_prompt=system_prompt, history=history
+            )
+
+        fallback_system_prompt = f"{system_prompt}\n\n{self._tools.to_prompt_block(is_admin)}"
+        text, usage = await self._local.generate_with_usage(
+            prompt, system_prompt=fallback_system_prompt, history=history
+        )
+        parsed = try_parse_json(text.strip())
+        if parsed and isinstance(parsed.get("tool"), str):
+            return text, [{"name": parsed["tool"], "arguments": parsed.get("arguments") or {}}], usage
+        return text, [], usage
+
+    async def _dispatch_tool_call(
+        self,
+        tool_call: dict,
+        user_id: int,
+        prompt: str,
+        is_admin: bool,
+        events: list[dict],
+        timing: dict[str, float],
+        trace_id: str,
+    ) -> dict:
+        name = tool_call.get("name")
+        arguments = tool_call.get("arguments") or {}
+        spec = self._tools.get(name)
+
+        if spec is None or (spec.admin_only and not is_admin):
+            # Defense in depth: the catalog shown to the model already
+            # excludes tools this user can't use, but nothing stops a model
+            # from hallucinating a call to one it was never shown.
+            logger.warning(f"Model called unknown/unauthorized tool '{name}' for user {user_id}")
+            self._emit(events, "answer_generated", {"source": "tool_denied", "tool": name})
+            return {
+                "text": "Не удалось выполнить это действие.",
+                "source": "tool_denied",
+                "context_used": False,
+                "rag_debug": None,
+                "confidence": None,
+                "llm_usage": {},
+                "timing": timing,
+                "rag_trace_id": trace_id,
+                "trace_events": events,
+            }
+
+        self._emit(events, "tool_called", {"tool": name, "arguments": arguments})
+        tool_start = time.monotonic()
+        try:
+            result = await spec.handler(**arguments)
+        except TypeError as exc:
+            # Malformed/missing arguments from the model — surfaced like any
+            # other tool failure instead of raising into the user.
+            result = ToolResult(text="Не хватает данных для выполнения действия.", success=False, error=str(exc))
+        timing["tool_seconds"] = round(time.monotonic() - tool_start, 2)
+
+        await self._audit(
+            user_id,
+            prompt,
+            decision="tool_call",
+            status="success" if result.success else "error",
+            detail={"tool": name, "arguments": arguments, "success": result.success},
+        )
+        self._emit(events, "answer_generated", {"source": "tool", "tool": name, "success": result.success})
+
+        return {
+            "text": result.text,
+            "source": "tool",
+            "context_used": False,
+            "rag_debug": None,
+            "confidence": None,
+            "llm_usage": {},
+            "timing": timing,
+            "rag_trace_id": trace_id,
+            "trace_events": events,
+            "structured_data": result.structured_data,
+            "tool_attachment": result.attachment,
+        }
+
+    async def _process_query(self, user_id: int, prompt: str, use_cloud_override: bool, is_admin: bool = False) -> dict:
         # Per-phase timings (rag/local/cloud, in seconds) so the Telegram
         # metrics line can show *where* the total elapsed time actually went
         # instead of just the opaque total — the local model's own inference
@@ -218,10 +327,14 @@ class CascadeRouter:
             self._emit(events, "context_built", {"chunk_count": len(rag_result["documents"]), "char_count": len(context)})
             self._emit(events, "llm_called", {"model": self._local.model_name, "source": "local"})
             local_start = time.monotonic()
-            text, llm_usage = await self._local.generate_with_usage(
-                prompt, system_prompt=f"{base_system_prompt}\n\nКонтекст:\n{context}", history=history
+            text, tool_calls, llm_usage = await self._generate_with_optional_tools(
+                prompt, system_prompt=f"{base_system_prompt}\n\nКонтекст:\n{context}", history=history, is_admin=is_admin
             )
             timing["local_seconds"] = round(time.monotonic() - local_start, 2)
+            if tool_calls:
+                return await self._dispatch_tool_call(
+                    tool_calls[0], user_id, prompt, is_admin, events, timing, trace_id
+                )
             if text.strip() and not self._local.needs_cloud(text):
                 clean_text, confidence = self._extract_confidence(text)
                 # With cloud disabled, local is the terminal step of the
@@ -248,10 +361,14 @@ class CascadeRouter:
         else:
             self._emit(events, "llm_called", {"model": self._local.model_name, "source": "local"})
             local_start = time.monotonic()
-            text, llm_usage = await self._local.generate_with_usage(
-                prompt, system_prompt=base_system_prompt, history=history
+            text, tool_calls, llm_usage = await self._generate_with_optional_tools(
+                prompt, system_prompt=base_system_prompt, history=history, is_admin=is_admin
             )
             timing["local_seconds"] = round(time.monotonic() - local_start, 2)
+            if tool_calls:
+                return await self._dispatch_tool_call(
+                    tool_calls[0], user_id, prompt, is_admin, events, timing, trace_id
+                )
             if text.strip() and not self._local.needs_cloud(text):
                 clean_text, confidence = self._extract_confidence(text)
                 if confidence != "low" or not self._cloud_enabled:

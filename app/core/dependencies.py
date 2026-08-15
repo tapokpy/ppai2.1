@@ -2,6 +2,7 @@ from redis.asyncio import Redis
 
 from app.core.config import settings
 from app.core.router import CascadeRouter
+from app.core.tool_registry import ToolRegistry
 from app.services.cloud_llm import CloudLLMClient
 from app.services.embeddings import default_embedding_function
 from app.services.local_llm import LocalLLMClient
@@ -9,6 +10,7 @@ from app.services.media_downloader import MediaDownloader
 from app.services.rag_engine import RAGEngine
 from app.services.resolume_controller import ResolumeController, ScreensMap
 from app.services.stt import Transcriber
+from app.services.tools import calculate_power_tool, download_youtube_tool
 
 
 def build_transcriber() -> Transcriber:
@@ -39,7 +41,16 @@ def build_screens_map() -> ScreensMap:
     return ScreensMap.load(settings.SCREENS_MAP_PATH)
 
 
-def build_cascade_router() -> CascadeRouter:
+def build_tool_registry(media_downloader: MediaDownloader) -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register(calculate_power_tool.TOOL_SPEC)
+    registry.register(download_youtube_tool.build_tool_spec(media_downloader))
+    # generate_image/create_chart join here once a provider is chosen /
+    # the chart service is built — see the tool-calling plan, Фаза 4.
+    return registry
+
+
+def build_cascade_router(tool_registry: ToolRegistry | None = None) -> CascadeRouter:
     rag_engine = RAGEngine(
         persist_dir=settings.CHROMA_PERSIST_DIR,
         score_threshold=settings.RAG_SCORE_THRESHOLD,
@@ -69,4 +80,5 @@ def build_cascade_router() -> CascadeRouter:
         redis_client=redis_client,
         cloud_daily_limit=settings.CLOUD_DAILY_LIMIT_PER_USER,
         cloud_enabled=settings.CLOUD_ENABLED,
+        tool_registry=tool_registry,
     )

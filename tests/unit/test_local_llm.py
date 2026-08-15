@@ -122,6 +122,66 @@ async def test_generate_with_usage_inserts_history_between_system_and_prompt():
 
 
 @pytest.mark.asyncio
+async def test_generate_with_tools_passes_tools_schema_to_ollama():
+    client = LocalLLMClient(base_url="http://localhost:11434", model="qwen2.5:7b")
+    client._client.chat = AsyncMock(return_value={"message": {"content": "", "tool_calls": []}})
+    tools = [{"type": "function", "function": {"name": "calculate_power"}}]
+
+    await client.generate_with_tools("посчитай", tools=tools, system_prompt="Ты ассистент.")
+
+    call_kwargs = client._client.chat.call_args.kwargs
+    assert call_kwargs["tools"] == tools
+    assert call_kwargs["messages"] == [
+        {"role": "system", "content": "Ты ассистент."},
+        {"role": "user", "content": "посчитай"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generate_with_tools_normalizes_tool_call_response():
+    client = LocalLLMClient(base_url="http://localhost:11434", model="qwen2.5:7b")
+    client._client.chat = AsyncMock(
+        return_value={
+            "message": {
+                "content": "",
+                "tool_calls": [{"function": {"name": "calculate_power", "arguments": {"module_count": 20}}}],
+            },
+            "prompt_eval_count": 100,
+            "eval_count": 10,
+        }
+    )
+
+    text, tool_calls, usage = await client.generate_with_tools("посчитай", tools=[{}])
+
+    assert text == ""
+    assert tool_calls == [{"name": "calculate_power", "arguments": {"module_count": 20}}]
+    assert usage == {"prompt_tokens": 100, "completion_tokens": 10}
+
+
+@pytest.mark.asyncio
+async def test_generate_with_tools_returns_empty_tool_calls_for_plain_answer():
+    client = LocalLLMClient(base_url="http://localhost:11434", model="qwen2.5:7b")
+    client._client.chat = AsyncMock(return_value={"message": {"content": "Привет!", "tool_calls": None}})
+
+    text, tool_calls, _usage = await client.generate_with_tools("привет", tools=[{}])
+
+    assert text == "Привет!"
+    assert tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_generate_with_tools_escalates_to_cloud_on_error():
+    client = LocalLLMClient(base_url="http://localhost:11434", model="qwen2.5:7b")
+    client._client.chat = AsyncMock(side_effect=ConnectionError("unreachable"))
+
+    text, tool_calls, usage = await client.generate_with_tools("привет", tools=[{}])
+
+    assert text == NEED_CLOUD_MARKER
+    assert tool_calls == []
+    assert usage == {}
+
+
+@pytest.mark.asyncio
 async def test_generate_with_usage_omits_history_key_when_not_given():
     client = LocalLLMClient(base_url="http://localhost:11434", model="qwen2.5:7b")
     client._client.chat = AsyncMock(return_value={"message": {"content": "ответ"}})

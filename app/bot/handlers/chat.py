@@ -117,6 +117,7 @@ def _build_message_model(db_user: User, telegram_message_id: int, prompt: str, r
         rag_debug=result.get("rag_debug"),
         timing=result.get("timing"),
         rag_trace_id=result.get("rag_trace_id"),
+        structured_data=result.get("structured_data"),
     )
 
 
@@ -149,7 +150,9 @@ async def _process_and_reply(
 ) -> None:
     placeholder = await message.answer(THINKING_PLACEHOLDER)
 
-    result = await cascade_router.process_query(user_id=db_user.id, prompt=prompt)
+    result = await cascade_router.process_query(
+        user_id=db_user.id, prompt=prompt, is_admin=is_admin(db_user.telegram_id)
+    )
 
     async with async_session_maker() as session:
         db_message = _build_message_model(db_user, message.message_id, prompt, result)
@@ -175,6 +178,10 @@ async def _process_and_reply(
         logger.warning(f"Failed to delete thinking placeholder: {exc}")
 
     await message.answer(_format_reply(result, db_user))
+
+    attachment = result.get("tool_attachment")
+    if attachment is not None:
+        await message.answer_document(FSInputFile(attachment.file_path))
 
 
 @router.message(F.text, ShouldRespondFilter())
