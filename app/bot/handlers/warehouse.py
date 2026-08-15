@@ -12,7 +12,7 @@ from app.bot.filters import (
 )
 from app.bot.fsm.warehouse import StockAddStates
 from app.bot.handlers.admin import ACCESS_DENIED_MESSAGE, is_admin
-from app.bot.keyboards.reply import BTN_STOCK_SUMMARY
+from app.bot.keyboards.reply import BTN_STOCK_ADD, BTN_STOCK_SUMMARY
 from app.core.config import settings
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.user import User
@@ -74,6 +74,7 @@ async def handle_warehouse_lookup(message: Message) -> None:
 
 
 @router.message(StockAddTriggerFilter(), ShouldRespondFilter())
+@router.message(F.text == BTN_STOCK_ADD, ShouldRespondFilter())
 async def start_stock_add(message: Message, state: FSMContext) -> None:
     if not is_admin(message.from_user.id):
         await message.answer(ACCESS_DENIED_MESSAGE)

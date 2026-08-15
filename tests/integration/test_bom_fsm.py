@@ -18,7 +18,6 @@ from app.bot.handlers.engineer import (
     bom_width_entered,
     start_bom_calculator,
 )
-from app.bot.keyboards.reply import BTN_BOM_CALC
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.message import Message as MessageModel
 from app.models.sqlalchemy.user import User
@@ -58,7 +57,7 @@ async def test_outdoor_bom_flow_skips_extra_questions(clean_db):
     user = await _seed_user(801)
     state = _new_state()
 
-    message = SimpleNamespace(text=BTN_BOM_CALC, message_id=1, answer=AsyncMock())
+    message = SimpleNamespace(text="/calc_bom", message_id=1, answer=AsyncMock())
     await start_bom_calculator(message, state)
     assert await state.get_state() == BomCalculatorStates.waiting_screen_type.state
 
@@ -93,7 +92,7 @@ async def test_open_frame_bom_flow_asks_module_size_and_psu(clean_db):
     user = await _seed_user(802)
     state = _new_state()
 
-    message = SimpleNamespace(text=BTN_BOM_CALC, message_id=2, answer=AsyncMock())
+    message = SimpleNamespace(text="/calc_bom", message_id=2, answer=AsyncMock())
     await start_bom_calculator(message, state)
 
     message.text = "open_frame"

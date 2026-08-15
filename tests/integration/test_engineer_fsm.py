@@ -16,7 +16,6 @@ from app.bot.handlers.engineer import (
     start_module_calculator,
     start_power_calculator,
 )
-from app.bot.keyboards.reply import BTN_MODULE_CALC, BTN_POWER_CALC
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.message import Message as MessageModel
 from app.models.sqlalchemy.user import User
@@ -111,7 +110,7 @@ async def test_module_calculator_full_flow(clean_db):
     user = await _seed_user(701)
     state = _new_state()
 
-    message = SimpleNamespace(text=BTN_MODULE_CALC, message_id=1, answer=AsyncMock())
+    message = SimpleNamespace(text="/calc_modules", message_id=1, answer=AsyncMock())
     await start_module_calculator(message, state)
     assert await state.get_state() == ModuleCalculatorStates.waiting_width.state
 
@@ -148,7 +147,7 @@ async def test_module_calculator_shows_business_rule_warning(clean_db):
         )
 
     state = _new_state()
-    message = SimpleNamespace(text=BTN_MODULE_CALC, message_id=2, answer=AsyncMock())
+    message = SimpleNamespace(text="/calc_modules", message_id=2, answer=AsyncMock())
     await start_module_calculator(message, state)
     message.text = "3.0"
     await module_width_entered(message, state)
@@ -167,7 +166,7 @@ async def test_power_calculator_full_flow(clean_db):
     user = await _seed_user(703)
     state = _new_state()
 
-    message = SimpleNamespace(text=BTN_POWER_CALC, message_id=3, answer=AsyncMock())
+    message = SimpleNamespace(text="/calc_power", message_id=3, answer=AsyncMock())
     await start_power_calculator(message, state)
 
     message.text = "10"

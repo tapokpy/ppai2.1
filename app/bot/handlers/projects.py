@@ -1,11 +1,13 @@
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy import select
 
+from app.bot.filters import ShouldRespondFilter
 from app.bot.fsm.calculators import BomCalculatorStates
 from app.bot.handlers.admin import ACCESS_DENIED_MESSAGE, is_admin
+from app.bot.keyboards.reply import BTN_MY_PROJECTS
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.engineering_doc import EngineeringDoc
 from app.models.sqlalchemy.project import Project
@@ -57,8 +59,7 @@ async def cmd_project_new(message: Message, command: CommandObject, db_user: Use
     await message.answer(f"Проект «{project.name}» создан, ID {project.id}.")
 
 
-@router.message(Command("project_list"))
-async def cmd_project_list(message: Message) -> None:
+async def _list_projects(message: Message) -> None:
     async with async_session_maker() as session:
         result = await session.execute(select(Project).order_by(Project.created_at.desc()).limit(20))
         projects = result.scalars().all()
@@ -69,6 +70,16 @@ async def cmd_project_list(message: Message) -> None:
 
     lines = [f"#{p.id} «{p.name}»" + (f" — {p.customer}" if p.customer else "") for p in projects]
     await message.answer("\n".join(lines))
+
+
+@router.message(Command("project_list"))
+async def cmd_project_list(message: Message) -> None:
+    await _list_projects(message)
+
+
+@router.message(F.text == BTN_MY_PROJECTS, ShouldRespondFilter())
+async def show_my_projects_button(message: Message) -> None:
+    await _list_projects(message)
 
 
 @router.message(Command("project_attach"))

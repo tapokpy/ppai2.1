@@ -1,12 +1,11 @@
 from dataclasses import asdict
 
-from aiogram import F, Router
-from aiogram.filters import StateFilter
+from aiogram import Router
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from app.bot.fsm.calculators import BomCalculatorStates, ModuleCalculatorStates, PowerCalculatorStates
-from app.bot.keyboards.reply import BTN_BOM_CALC, BTN_MODULE_CALC, BTN_POWER_CALC
 from app.bot.keyboards.inline import calculator_export_actions
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.message import Message as MessageModel
@@ -87,7 +86,7 @@ async def _save_calculator_result(
         await session.commit()
 
 
-@router.message(F.text == BTN_MODULE_CALC)
+@router.message(Command("calc_modules"))
 async def start_module_calculator(message: Message, state: FSMContext) -> None:
     await state.set_state(ModuleCalculatorStates.waiting_width)
     await message.answer("Введите ширину экрана в метрах:")
@@ -152,7 +151,7 @@ async def module_pixel_pitch_entered(message: Message, state: FSMContext, db_use
     await message.answer(text, reply_markup=calculator_export_actions(message.message_id))
 
 
-@router.message(F.text == BTN_POWER_CALC)
+@router.message(Command("calc_power"))
 async def start_power_calculator(message: Message, state: FSMContext) -> None:
     await state.set_state(PowerCalculatorStates.waiting_module_count)
     await message.answer("Введите количество модулей:")
@@ -234,7 +233,7 @@ def _bom_result_to_structured_data(result: LedBomResult) -> dict:
     }
 
 
-@router.message(F.text == BTN_BOM_CALC)
+@router.message(Command("calc_bom"))
 async def start_bom_calculator(message: Message, state: FSMContext) -> None:
     await state.set_state(BomCalculatorStates.waiting_screen_type)
     await message.answer(BOM_SCREEN_TYPE_PROMPT)

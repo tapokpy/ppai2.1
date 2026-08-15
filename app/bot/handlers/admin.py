@@ -1,10 +1,12 @@
 import httpx
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 from loguru import logger
 from sqlalchemy import select
 
+from app.bot.filters import ShouldRespondFilter
+from app.bot.keyboards.reply import BTN_DASHBOARD
 from app.core.config import settings
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.user import User
@@ -39,16 +41,12 @@ async def cmd_admin(message: Message) -> None:
         "/add_rule <условие> — добавить бизнес-правило\n"
         "/edit_prompt — изменить промпт роли\n"
         "/set_history_depth <N> — глубина истории диалога\n"
-        "/dashboard — открыть RAG-панель (визуализация retrieval, трейсы, документы)"
+        "/dashboard — открыть RAG-панель (визуализация retrieval, трейсы, документы)\n"
+        "/calc_power, /calc_modules, /calc_bom — инженерные калькуляторы"
     )
 
 
-@router.message(Command("dashboard"))
-async def cmd_dashboard(message: Message) -> None:
-    if not is_admin(message.from_user.id):
-        await message.answer(ACCESS_DENIED_MESSAGE)
-        return
-
+async def _send_dashboard_link(message: Message) -> None:
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -69,6 +67,24 @@ async def cmd_dashboard(message: Message) -> None:
         f"Открыть RAG-панель (ссылка активна {expires_in}с):\n"
         f"{settings.WEB_DASHBOARD_URL}/login?ott={ott}"
     )
+
+
+@router.message(Command("dashboard"))
+async def cmd_dashboard(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        await message.answer(ACCESS_DENIED_MESSAGE)
+        return
+
+    await _send_dashboard_link(message)
+
+
+@router.message(F.text == BTN_DASHBOARD, ShouldRespondFilter())
+async def show_dashboard_button(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        await message.answer(ACCESS_DENIED_MESSAGE)
+        return
+
+    await _send_dashboard_link(message)
 
 
 @router.message(Command("add_user"))
