@@ -43,6 +43,32 @@ async def test_handle_media_link_shows_format_keyboard_on_success():
 
 
 @pytest.mark.asyncio
+async def test_handle_media_link_shows_largest_formats_first():
+    # yt-dlp returns formats ascending (smallest/worst quality first) — the
+    # keyboard must show the biggest/best options, not just the first N in
+    # that order (which was the bug: only tiny 144p/240p options ever showed).
+    media_downloader = AsyncMock()
+    media_downloader.probe = AsyncMock(
+        return_value=ProbeResult(
+            title="Видео",
+            formats=[
+                FormatOption(format_id="144p", description="144p", filesize_bytes=1_000_000),
+                FormatOption(format_id="240p", description="240p", filesize_bytes=5_000_000),
+                FormatOption(format_id="720p", description="720p", filesize_bytes=50_000_000),
+                FormatOption(format_id="360p", description="360p", filesize_bytes=15_000_000),
+            ],
+        )
+    )
+    message = SimpleNamespace(text="https://example.com/watch?v=abc", answer=AsyncMock())
+
+    await handle_media_link(message, media_downloader)
+
+    keyboard = message.answer.call_args.kwargs["reply_markup"]
+    button_texts = [row[0].text for row in keyboard.inline_keyboard]
+    assert button_texts == ["720p", "360p", "240p", "144p"]
+
+
+@pytest.mark.asyncio
 async def test_handle_media_link_reports_probe_failure():
     media_downloader = AsyncMock()
     media_downloader.probe = AsyncMock(side_effect=MediaDownloadError("Unsupported URL"))

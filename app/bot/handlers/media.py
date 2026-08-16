@@ -43,9 +43,15 @@ _pending: dict[str, _PendingDownload] = {}
 
 
 def _formats_keyboard(token: str, formats: list[FormatOption]) -> InlineKeyboardMarkup:
+    # yt-dlp returns formats sorted ascending (worst quality first) — sort
+    # by filesize (the only quality signal FormatOption carries) descending
+    # first, so the _MAX_FORMAT_BUTTONS buttons shown are the biggest/best
+    # options, not whatever the first 8 happened to be in yt-dlp's own order
+    # (which was consistently the smallest/lowest-resolution ones).
+    best_first = sorted(formats, key=lambda f: f.filesize_bytes or 0, reverse=True)
     buttons = [
         [InlineKeyboardButton(text=f.description, callback_data=f"media_dl:{token}:{f.format_id}")]
-        for f in formats[:_MAX_FORMAT_BUTTONS]
+        for f in best_first[:_MAX_FORMAT_BUTTONS]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
