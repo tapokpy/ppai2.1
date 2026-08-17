@@ -89,6 +89,13 @@ class Settings(BaseSettings):
     # explicit user decision. Bind-mounted to a real host folder (e.g.
     # D:/Видео) via docker-compose.prod.yml's DOWNLOAD_HOST_PATH.
     DOWNLOAD_STORAGE_PATH: str = "./data/downloads"
+    # bot and api both mount the same app_data volume (see
+    # docker-compose.prod.yml), so a file sink here written by either
+    # service is readable by both — lets the read_logs tool (running in
+    # the bot process) surface api's logs too, without mounting the Docker
+    # socket into the bot container (a much bigger blast radius than a
+    # shared log directory just to answer "what's in the logs").
+    LOG_STORAGE_PATH: str = "./data/logs"
     SCREENS_MAP_PATH: str = "./screens_map.yaml"
     # Resolume runs on the same machine as Docker Desktop (per spec) — from
     # inside a container that's the host, not localhost. host.docker.internal

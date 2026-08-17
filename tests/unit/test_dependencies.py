@@ -55,6 +55,7 @@ def test_build_tool_registry_registers_all_tools_by_default():
     with (
         patch("app.core.dependencies.settings.TAVILY_API_KEY", ""),
         patch("app.core.dependencies.settings.GOOGLE_SHEETS_API_KEY", ""),
+        patch("app.core.dependencies.settings.TOOLS_DISABLED", ""),
     ):
         registry = build_tool_registry()
 
@@ -69,6 +70,7 @@ def test_build_tool_registry_registers_all_tools_by_default():
         "calculate_modules",
         "list_projects",
         "read_google_doc",
+        "read_logs",
     }
 
 
@@ -104,7 +106,10 @@ def test_build_tool_registry_excludes_read_google_sheet_without_api_key():
 
 
 def test_build_tool_registry_includes_read_google_sheet_with_api_key():
-    with patch("app.core.dependencies.settings.GOOGLE_SHEETS_API_KEY", "fake-key"):
+    with (
+        patch("app.core.dependencies.settings.GOOGLE_SHEETS_API_KEY", "fake-key"),
+        patch("app.core.dependencies.settings.TOOLS_DISABLED", ""),
+    ):
         registry = build_tool_registry()
 
     assert registry.get("read_google_sheet") is not None

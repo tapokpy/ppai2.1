@@ -34,6 +34,7 @@ from app.core.dependencies import (
     build_tool_registry,
     build_transcriber,
 )
+from app.core.logging_setup import configure_file_logging
 from app.core.scheduler import ReminderScheduler
 from app.services.project_docs_ingest import sync_project_docs
 
@@ -99,6 +100,7 @@ def build_dispatcher() -> Dispatcher:
 
 
 async def main() -> None:
+    configure_file_logging("bot")
     bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = build_dispatcher()
     transcriber = build_transcriber()

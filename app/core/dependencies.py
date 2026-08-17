@@ -20,6 +20,7 @@ from app.services.tools import (
     list_projects_tool,
     read_google_doc_tool,
     read_google_sheet_tool,
+    read_logs_tool,
     warehouse_lookup_tool,
     web_search_tool,
 )
@@ -69,6 +70,7 @@ def build_tool_registry() -> ToolRegistry:
         calculate_modules_tool.TOOL_SPEC,
         list_projects_tool.TOOL_SPEC,
         read_google_doc_tool.TOOL_SPEC,
+        read_logs_tool.TOOL_SPEC,
     ]
     # Empty TAVILY_API_KEY means the tool literally can't function (every
     # call would just fail), so it's excluded from the registry entirely

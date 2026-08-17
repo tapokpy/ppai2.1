@@ -7,10 +7,12 @@ from sqlalchemy import text
 from app.api.v1 import api_router
 from app.core.database import engine
 from app.core.dependencies import build_cascade_router
+from app.core.logging_setup import configure_file_logging
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_file_logging("api")
     app.state.cascade_router = build_cascade_router()
     yield
     await engine.dispose()

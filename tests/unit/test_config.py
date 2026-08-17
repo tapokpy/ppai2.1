@@ -24,5 +24,5 @@ def test_disabled_tools_parsed_from_csv():
 
 
 def test_disabled_tools_empty_by_default():
-    settings = Settings()
+    settings = Settings(TOOLS_DISABLED="")
     assert settings.disabled_tools == set()
