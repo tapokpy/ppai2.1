@@ -18,6 +18,8 @@ from app.services.tools import (
     find_history_tool,
     get_recent_activity_tool,
     list_projects_tool,
+    read_google_doc_tool,
+    read_google_sheet_tool,
     warehouse_lookup_tool,
     web_search_tool,
 )
@@ -66,6 +68,7 @@ def build_tool_registry() -> ToolRegistry:
         warehouse_lookup_tool.TOOL_SPEC,
         calculate_modules_tool.TOOL_SPEC,
         list_projects_tool.TOOL_SPEC,
+        read_google_doc_tool.TOOL_SPEC,
     ]
     # Empty TAVILY_API_KEY means the tool literally can't function (every
     # call would just fail), so it's excluded from the registry entirely
@@ -73,6 +76,11 @@ def build_tool_registry() -> ToolRegistry:
     # pattern as ANTHROPIC_API_KEY gating CLOUD_ENABLED.
     if settings.TAVILY_API_KEY:
         all_specs.append(web_search_tool.build_tool_spec(settings.TAVILY_API_KEY))
+    # Same gating rationale as web_search above — GOOGLE_SHEETS_API_KEY
+    # already exists for the warehouse stock-import flow (sheets_import.py);
+    # reused here rather than adding a second key for the same API.
+    if settings.GOOGLE_SHEETS_API_KEY:
+        all_specs.append(read_google_sheet_tool.build_tool_spec(settings.GOOGLE_SHEETS_API_KEY))
 
     registry = ToolRegistry()
     for spec in all_specs:

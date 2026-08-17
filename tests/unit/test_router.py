@@ -562,7 +562,11 @@ async def test_tools_disabled_by_default_never_calls_generate_with_tools():
         rag_found=False, tool_registry=registry
     )
 
-    result = await router.process_query(user_id=1, prompt="посчитай питание для 20 модулей")
+    # Tests the actual declared default (config.py: TOOLS_ENABLED = False),
+    # independent of whatever real .env this test process happens to load
+    # (production genuinely runs with TOOLS_ENABLED=true).
+    with patch("app.core.router.settings.TOOLS_ENABLED", False):
+        result = await router.process_query(user_id=1, prompt="посчитай питание для 20 модулей")
 
     local_llm.generate_with_tools.assert_not_called()
     local_llm.generate_with_usage.assert_awaited_once()

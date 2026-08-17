@@ -48,7 +48,15 @@ def test_build_transcriber_returns_transcriber_instance():
 
 
 def test_build_tool_registry_registers_all_tools_by_default():
-    registry = build_tool_registry()
+    # Explicitly empty regardless of the real .env this test process
+    # happens to load — the point of this test is which tools are
+    # unconditionally registered, not what optional keys are configured
+    # in whatever environment it runs in.
+    with (
+        patch("app.core.dependencies.settings.TAVILY_API_KEY", ""),
+        patch("app.core.dependencies.settings.GOOGLE_SHEETS_API_KEY", ""),
+    ):
+        registry = build_tool_registry()
 
     names = {t.name for t in registry.list_for(is_admin=True)}
     assert names == {
@@ -60,6 +68,7 @@ def test_build_tool_registry_registers_all_tools_by_default():
         "warehouse_lookup",
         "calculate_modules",
         "list_projects",
+        "read_google_doc",
     }
 
 
@@ -74,7 +83,8 @@ def test_build_tool_registry_skips_disabled_tools():
 
 
 def test_build_tool_registry_excludes_web_search_without_api_key():
-    registry = build_tool_registry()
+    with patch("app.core.dependencies.settings.TAVILY_API_KEY", ""):
+        registry = build_tool_registry()
 
     assert registry.get("web_search") is None
 
@@ -84,3 +94,17 @@ def test_build_tool_registry_includes_web_search_with_api_key():
         registry = build_tool_registry()
 
     assert registry.get("web_search") is not None
+
+
+def test_build_tool_registry_excludes_read_google_sheet_without_api_key():
+    with patch("app.core.dependencies.settings.GOOGLE_SHEETS_API_KEY", ""):
+        registry = build_tool_registry()
+
+    assert registry.get("read_google_sheet") is None
+
+
+def test_build_tool_registry_includes_read_google_sheet_with_api_key():
+    with patch("app.core.dependencies.settings.GOOGLE_SHEETS_API_KEY", "fake-key"):
+        registry = build_tool_registry()
+
+    assert registry.get("read_google_sheet") is not None
