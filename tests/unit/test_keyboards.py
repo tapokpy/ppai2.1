@@ -1,24 +1,4 @@
 from app.bot.keyboards.inline import response_actions
-from app.bot.keyboards.reply import (
-    BTN_DASHBOARD,
-    BTN_MY_PROJECTS,
-    BTN_RAG_MEMORY,
-    BTN_STOCK_ADD,
-    BTN_STOCK_SUMMARY,
-    BTN_TODO_LIST,
-    main_menu,
-)
-
-
-def test_main_menu_has_expected_buttons():
-    markup = main_menu()
-
-    texts = [button.text for row in markup.keyboard for button in row]
-
-    assert texts == [
-        BTN_STOCK_SUMMARY, BTN_STOCK_ADD, BTN_TODO_LIST, BTN_MY_PROJECTS, BTN_RAG_MEMORY, BTN_DASHBOARD,
-    ]
-    assert markup.resize_keyboard is True
 
 
 def test_response_actions_callback_data():

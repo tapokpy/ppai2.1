@@ -5,6 +5,7 @@ from app.core.tool_registry import ToolParameter, ToolResult, ToolSpec
 from app.models.sqlalchemy.showroom_media import ShowroomMedia
 
 _RESULT_LIMIT = 10
+_RECENT_LIMIT = 5
 
 
 def _human_size(num_bytes: int) -> str:
@@ -14,21 +15,20 @@ def _human_size(num_bytes: int) -> str:
     return f"{mb / 1024:.1f} ГБ"
 
 
-async def run(query: str) -> ToolResult:
+async def run(query: str = "") -> ToolResult:
     async with async_session_maker() as session:
-        rows = (
-            await session.execute(
-                select(ShowroomMedia)
-                .where(ShowroomMedia.title.ilike(f"%{query}%"))
-                .order_by(ShowroomMedia.created_at.desc())
-                .limit(_RESULT_LIMIT)
-            )
-        ).scalars().all()
+        stmt = select(ShowroomMedia)
+        if query:
+            stmt = stmt.where(ShowroomMedia.title.ilike(f"%{query}%"))
+        stmt = stmt.order_by(ShowroomMedia.created_at.desc()).limit(_RESULT_LIMIT if query else _RECENT_LIMIT)
+        rows = (await session.execute(stmt)).scalars().all()
 
     if not rows:
-        return ToolResult(text=f"Не нашёл скачанных файлов по «{query}».")
+        text = f"Не нашёл скачанных файлов по «{query}»." if query else "Скачанных файлов пока нет."
+        return ToolResult(text=text)
 
-    lines = [f"📁 Найдено по «{query}»:"]
+    header = f"📁 Найдено по «{query}»:" if query else "📁 Последние скачанные файлы:"
+    lines = [header]
     lines.extend(f"— «{m.title}» ({_human_size(m.file_size_bytes)}) — {m.file_path}" for m in rows)
     return ToolResult(text="\n".join(lines))
 
@@ -36,9 +36,17 @@ async def run(query: str) -> ToolResult:
 TOOL_SPEC = ToolSpec(
     name="find_downloaded_file",
     description=(
-        "Ищет уже скачанные видео/файлы в медиатеке по названию и показывает путь к файлу на диске и его "
-        "размер — например «где файл про X», «какой путь у скачанного видео Y», «что уже скачано про Z»."
+        "Показывает уже скачанные видео/файлы и путь к ним на диске — например «где файл про X», "
+        "«куда сохранился этот файл», «что мы вообще скачивали», «что скачали недавно». Если пользователь "
+        "не назвал конкретное название — вызови без query, вернутся последние скачанные файлы."
     ),
-    parameters=[ToolParameter(name="query", type="string", description="Название или часть названия файла")],
+    parameters=[
+        ToolParameter(
+            name="query",
+            type="string",
+            description="Название или часть названия файла, если оно известно",
+            required=False,
+        )
+    ],
     handler=run,
 )

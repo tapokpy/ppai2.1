@@ -47,3 +47,29 @@ async def test_run_reports_no_matches():
         result = await find_downloaded_file_tool.run(query="несуществующее")
 
     assert "не нашёл" in result.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_run_without_query_lists_recent_files():
+    # "куда сохранился этот файл" / "что мы скачивали" — no title to search
+    # for, so an empty/omitted query should list recent downloads instead
+    # of failing or forcing the model to invent an unrelated search term.
+    media = SimpleNamespace(title="Свежее видео", file_path="/app/data/media/new.mp4", file_size_bytes=10_000_000)
+    with patch("app.services.tools.find_downloaded_file_tool.async_session_maker", lambda: _FakeSession([media])):
+        result = await find_downloaded_file_tool.run()
+
+    assert "Свежее видео" in result.text
+    assert "Последние скачанные файлы" in result.text
+
+
+@pytest.mark.asyncio
+async def test_run_without_query_and_no_files_reports_empty():
+    with patch("app.services.tools.find_downloaded_file_tool.async_session_maker", lambda: _FakeSession([])):
+        result = await find_downloaded_file_tool.run()
+
+    assert "пока нет" in result.text.lower()
+
+
+def test_tool_spec_query_parameter_is_optional():
+    param = next(p for p in find_downloaded_file_tool.TOOL_SPEC.parameters if p.name == "query")
+    assert param.required is False

@@ -1,12 +1,10 @@
 import httpx
-from aiogram import F, Router
+from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 from loguru import logger
 from sqlalchemy import select
 
-from app.bot.filters import ShouldRespondFilter
-from app.bot.keyboards.reply import BTN_DASHBOARD
 from app.core.config import settings
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.user import User
@@ -71,15 +69,6 @@ async def _send_dashboard_link(message: Message) -> None:
 
 @router.message(Command("dashboard"))
 async def cmd_dashboard(message: Message) -> None:
-    if not is_admin(message.from_user.id):
-        await message.answer(ACCESS_DENIED_MESSAGE)
-        return
-
-    await _send_dashboard_link(message)
-
-
-@router.message(F.text == BTN_DASHBOARD, ShouldRespondFilter())
-async def show_dashboard_button(message: Message) -> None:
     if not is_admin(message.from_user.id):
         await message.answer(ACCESS_DENIED_MESSAGE)
         return

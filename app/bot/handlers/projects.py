@@ -1,13 +1,11 @@
-from aiogram import F, Router
+from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy import select
 
-from app.bot.filters import ShouldRespondFilter
 from app.bot.fsm.calculators import BomCalculatorStates
 from app.bot.handlers.admin import ACCESS_DENIED_MESSAGE, is_admin
-from app.bot.keyboards.reply import BTN_MY_PROJECTS
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.engineering_doc import EngineeringDoc
 from app.models.sqlalchemy.project import Project
@@ -74,11 +72,6 @@ async def _list_projects(message: Message) -> None:
 
 @router.message(Command("project_list"))
 async def cmd_project_list(message: Message) -> None:
-    await _list_projects(message)
-
-
-@router.message(F.text == BTN_MY_PROJECTS, ShouldRespondFilter())
-async def show_my_projects_button(message: Message) -> None:
     await _list_projects(message)
 
 

@@ -5,7 +5,6 @@ from sqlalchemy import select
 
 from app.bot.filters import TODO_TRIGGER_PATTERN, ShouldRespondFilter, TodoTriggerFilter
 from app.bot.handlers.admin import ACCESS_DENIED_MESSAGE, is_admin
-from app.bot.keyboards.reply import BTN_TODO_LIST
 from app.core.database import async_session_maker
 from app.core.router import CascadeRouter
 from app.core.todo_parser import parse_todo_with_llm
@@ -75,15 +74,6 @@ async def handle_todo(
 ) -> None:
     cleaned_text = TODO_TRIGGER_PATTERN.sub("", message.text).strip() or message.text
     await _process_and_save_todo(message, cleaned_text, cascade_router, local_llm, db_user)
-
-
-@router.message(F.text == BTN_TODO_LIST, ShouldRespondFilter())
-async def show_todo_list_button(message: Message) -> None:
-    if not is_admin(message.from_user.id):
-        await message.answer(ACCESS_DENIED_MESSAGE)
-        return
-
-    await _list_todos(message)
 
 
 @router.message(Command("todo"))

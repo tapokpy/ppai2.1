@@ -1,10 +1,8 @@
-from aiogram import F, Router
+from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 from sqlalchemy import func, select
 
-from app.bot.filters import ShouldRespondFilter
-from app.bot.keyboards.reply import BTN_RAG_MEMORY
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.document import Document
 from app.models.sqlalchemy.message import Message as MessageModel
@@ -21,7 +19,7 @@ FIND_USAGE = "Использование: /find <текст для поиска>
 _FIND_RESULT_LIMIT = 10
 
 
-@router.message(F.text == BTN_RAG_MEMORY, ShouldRespondFilter())
+@router.message(Command("memory"))
 async def handle_rag_memory_overview(message: Message, db_user: User) -> None:
     async with async_session_maker() as session:
         doc_rows = (

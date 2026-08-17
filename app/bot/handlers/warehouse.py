@@ -1,4 +1,4 @@
-from aiogram import F, Router
+from aiogram import Router
 from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
@@ -12,7 +12,6 @@ from app.bot.filters import (
 )
 from app.bot.fsm.warehouse import StockAddStates
 from app.bot.handlers.admin import ACCESS_DENIED_MESSAGE, is_admin
-from app.bot.keyboards.reply import BTN_STOCK_ADD, BTN_STOCK_SUMMARY
 from app.core.config import settings
 from app.core.database import async_session_maker
 from app.models.sqlalchemy.user import User
@@ -74,7 +73,6 @@ async def handle_warehouse_lookup(message: Message) -> None:
 
 
 @router.message(StockAddTriggerFilter(), ShouldRespondFilter())
-@router.message(F.text == BTN_STOCK_ADD, ShouldRespondFilter())
 async def start_stock_add(message: Message, state: FSMContext) -> None:
     if not is_admin(message.from_user.id):
         await message.answer(ACCESS_DENIED_MESSAGE)
@@ -165,7 +163,7 @@ async def stock_add_quantity(message: Message, state: FSMContext, db_user: User)
     )
 
 
-@router.message(F.text == BTN_STOCK_SUMMARY, ShouldRespondFilter())
+@router.message(Command("stock_summary"))
 async def handle_stock_summary(message: Message) -> None:
     async with async_session_maker() as session:
         result = await session.execute(
