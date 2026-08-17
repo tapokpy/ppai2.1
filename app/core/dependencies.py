@@ -51,7 +51,7 @@ def build_screens_map() -> ScreensMap:
     return ScreensMap.load(settings.SCREENS_MAP_PATH)
 
 
-def build_tool_registry(media_downloader: MediaDownloader) -> ToolRegistry:
+def build_tool_registry() -> ToolRegistry:
     # Kill-switched per-tool via TOOLS_DISABLED (comma-separated names) — a
     # disabled tool is never registered, so the model never even sees it in
     # the schema. Lets new tools be rolled out one at a time with a live
@@ -59,7 +59,7 @@ def build_tool_registry(media_downloader: MediaDownloader) -> ToolRegistry:
     # of them to the model in one shot.
     all_specs = [
         calculate_power_tool.TOOL_SPEC,
-        download_youtube_tool.build_tool_spec(media_downloader),
+        download_youtube_tool.build_tool_spec(),
         find_history_tool.TOOL_SPEC,
         get_recent_activity_tool.TOOL_SPEC,
         find_downloaded_file_tool.TOOL_SPEC,

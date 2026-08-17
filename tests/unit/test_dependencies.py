@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from app.core.dependencies import build_cascade_router, build_tool_registry, build_transcriber
 from app.core.router import CascadeRouter
@@ -48,7 +48,7 @@ def test_build_transcriber_returns_transcriber_instance():
 
 
 def test_build_tool_registry_registers_all_tools_by_default():
-    registry = build_tool_registry(MagicMock())
+    registry = build_tool_registry()
 
     names = {t.name for t in registry.list_for(is_admin=True)}
     assert names == {
@@ -65,7 +65,7 @@ def test_build_tool_registry_registers_all_tools_by_default():
 
 def test_build_tool_registry_skips_disabled_tools():
     with patch("app.core.dependencies.settings.TOOLS_DISABLED", "warehouse_lookup,list_projects"):
-        registry = build_tool_registry(MagicMock())
+        registry = build_tool_registry()
 
     names = {t.name for t in registry.list_for(is_admin=True)}
     assert "warehouse_lookup" not in names
@@ -74,13 +74,13 @@ def test_build_tool_registry_skips_disabled_tools():
 
 
 def test_build_tool_registry_excludes_web_search_without_api_key():
-    registry = build_tool_registry(MagicMock())
+    registry = build_tool_registry()
 
     assert registry.get("web_search") is None
 
 
 def test_build_tool_registry_includes_web_search_with_api_key():
     with patch("app.core.dependencies.settings.TAVILY_API_KEY", "fake-key"):
-        registry = build_tool_registry(MagicMock())
+        registry = build_tool_registry()
 
     assert registry.get("web_search") is not None

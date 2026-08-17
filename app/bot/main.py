@@ -103,7 +103,7 @@ async def main() -> None:
     dp = build_dispatcher()
     transcriber = build_transcriber()
     media_downloader = build_media_downloader()
-    tool_registry = build_tool_registry(media_downloader)
+    tool_registry = build_tool_registry()
     cascade_router = build_cascade_router(tool_registry=tool_registry)
     resolume_controller = build_resolume_controller()
     screens_map = build_screens_map()

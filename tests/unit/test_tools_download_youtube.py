@@ -1,110 +1,143 @@
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.media_downloader import FormatOption, MediaDownloadError, MediaQuotaError, ProbeResult
+from app.core.tool_registry import ToolAttachment
 from app.services.tools import download_youtube_tool
+from app.services.video_transcode import TranscodeError
 
 
-def _downloader(probe_result=None, probe_error=None, download_error=None, quota_error=None):
-    downloader = MagicMock()
-    if probe_error:
-        downloader.probe = AsyncMock(side_effect=probe_error)
-    else:
-        downloader.probe = AsyncMock(return_value=probe_result)
-    downloader.ensure_quota = AsyncMock(side_effect=quota_error) if quota_error else AsyncMock()
-    if download_error:
-        downloader.download = AsyncMock(side_effect=download_error)
-    else:
-        downloader.download = AsyncMock(
-            return_value=SimpleNamespace(title="Видео", file_path="/data/media/abc.mp4")
-        )
-    return downloader
+def _fake_ydl(info: dict, prepared_filename: str) -> MagicMock:
+    ydl = MagicMock()
+    ydl.__enter__ = MagicMock(return_value=ydl)
+    ydl.__exit__ = MagicMock(return_value=False)
+    ydl.extract_info.return_value = info
+    ydl.prepare_filename.return_value = prepared_filename
+    return ydl
+
+
+class _FakeSessionCtx:
+    def __init__(self, session):
+        self._session = session
+
+    async def __aenter__(self):
+        return self._session
+
+    async def __aexit__(self, *_args):
+        return False
+
+
+def _fake_session():
+    session = MagicMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    return session
 
 
 @pytest.mark.asyncio
-async def test_run_downloads_and_returns_attachment():
-    probe = ProbeResult(
-        title="Видео",
-        formats=[
-            FormatOption(format_id="best", description="1080p · 30 МБ", filesize_bytes=30 * 1024 * 1024),
-            FormatOption(format_id="worst", description="360p · 5 МБ", filesize_bytes=5 * 1024 * 1024),
-        ],
-    )
-    downloader = _downloader(probe_result=probe)
-    spec = download_youtube_tool.build_tool_spec(downloader)
+async def test_run_downloads_transcodes_and_saves(tmp_path):
+    downloaded_source = tmp_path / ".tmp_abc.mp4"
+    downloaded_source.write_bytes(b"fake source video")
+    ydl = _fake_ydl(info={"title": "Крутое видео"}, prepared_filename=str(downloaded_source))
 
-    result = await spec.handler(url="https://youtu.be/abc")
+    async def fake_transcode(_input_path, output_path):
+        Path(output_path).write_bytes(b"fake transcoded video")
+
+    session = _fake_session()
+
+    with (
+        patch("app.services.tools.download_youtube_tool.settings.DOWNLOAD_STORAGE_PATH", str(tmp_path)),
+        patch("app.services.tools.download_youtube_tool.yt_dlp.YoutubeDL", return_value=ydl),
+        patch("app.services.tools.download_youtube_tool.transcode_to_h264_mp4", fake_transcode),
+        patch("app.services.tools.download_youtube_tool.async_session_maker", lambda: _FakeSessionCtx(session)),
+    ):
+        result = await download_youtube_tool.run(url="https://youtu.be/abc")
 
     assert result.success is True
-    assert result.attachment.file_path == "/data/media/abc.mp4"
-    downloader.download.assert_awaited_once_with("https://youtu.be/abc", "best", "Видео")
+    assert "Крутое видео" in result.text
+    assert isinstance(result.attachment, ToolAttachment)
+    saved_path = Path(result.attachment.file_path)
+    assert saved_path.exists()
+    assert saved_path.name == "Крутое видео.mp4"
+    assert not downloaded_source.exists()
+    session.add.assert_called_once()
+    session.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_run_reports_error_when_probe_fails():
-    downloader = _downloader(probe_error=MediaDownloadError("сайт не поддерживается"))
-    spec = download_youtube_tool.build_tool_spec(downloader)
-
-    result = await spec.handler(url="https://example.com/x")
+async def test_run_reports_error_when_download_fails(tmp_path):
+    with (
+        patch("app.services.tools.download_youtube_tool.settings.DOWNLOAD_STORAGE_PATH", str(tmp_path)),
+        patch(
+            "app.services.tools.download_youtube_tool.yt_dlp.YoutubeDL",
+            side_effect=RuntimeError("сайт не поддерживается"),
+        ),
+    ):
+        result = await download_youtube_tool.run(url="https://example.com/x")
 
     assert result.success is False
     assert "не поддерживается" in result.error
 
 
 @pytest.mark.asyncio
-async def test_run_reports_error_when_no_formats_available():
-    downloader = _downloader(probe_result=ProbeResult(title="Видео", formats=[]))
-    spec = download_youtube_tool.build_tool_spec(downloader)
+async def test_run_reports_error_when_transcode_fails_and_cleans_up_temp(tmp_path):
+    downloaded_source = tmp_path / ".tmp_abc.webm"
+    downloaded_source.write_bytes(b"fake source video")
+    ydl = _fake_ydl(info={"title": "Видео"}, prepared_filename=str(downloaded_source))
 
-    result = await spec.handler(url="https://youtu.be/abc")
+    async def failing_transcode(_input_path, _output_path):
+        raise TranscodeError("ffmpeg завершился с ошибкой: boom")
+
+    with (
+        patch("app.services.tools.download_youtube_tool.settings.DOWNLOAD_STORAGE_PATH", str(tmp_path)),
+        patch("app.services.tools.download_youtube_tool.yt_dlp.YoutubeDL", return_value=ydl),
+        patch("app.services.tools.download_youtube_tool.transcode_to_h264_mp4", failing_transcode),
+    ):
+        result = await download_youtube_tool.run(url="https://youtu.be/abc")
 
     assert result.success is False
+    assert "ffmpeg" in result.error
+    assert not downloaded_source.exists()
 
 
 @pytest.mark.asyncio
-async def test_run_reports_quota_error():
-    probe = ProbeResult(
-        title="Видео", formats=[FormatOption(format_id="best", description="x", filesize_bytes=10 * 1024 * 1024)]
-    )
-    downloader = _downloader(probe_result=probe, quota_error=MediaQuotaError("не хватает места"))
-    spec = download_youtube_tool.build_tool_spec(downloader)
+async def test_run_skips_attachment_for_oversized_file(tmp_path):
+    downloaded_source = tmp_path / ".tmp_abc.mp4"
+    downloaded_source.write_bytes(b"fake source video")
+    ydl = _fake_ydl(info={"title": "Большое видео"}, prepared_filename=str(downloaded_source))
 
-    result = await spec.handler(url="https://youtu.be/abc")
+    async def fake_transcode(_input_path, output_path):
+        # 51 MB — over the 50 MB Telegram upload limit.
+        Path(output_path).write_bytes(b"0" * (51 * 1024 * 1024))
 
-    assert result.success is False
-    assert "места" in result.error
+    session = _fake_session()
 
+    with (
+        patch("app.services.tools.download_youtube_tool.settings.DOWNLOAD_STORAGE_PATH", str(tmp_path)),
+        patch("app.services.tools.download_youtube_tool.yt_dlp.YoutubeDL", return_value=ydl),
+        patch("app.services.tools.download_youtube_tool.transcode_to_h264_mp4", fake_transcode),
+        patch("app.services.tools.download_youtube_tool.async_session_maker", lambda: _FakeSessionCtx(session)),
+    ):
+        result = await download_youtube_tool.run(url="https://youtu.be/abc")
 
-def test_pick_format_prefers_best_quality_under_telegram_limit():
-    formats = [
-        FormatOption(format_id="huge", description="4K", filesize_bytes=200 * 1024 * 1024),
-        FormatOption(format_id="fits", description="720p", filesize_bytes=40 * 1024 * 1024),
-        FormatOption(format_id="small", description="360p", filesize_bytes=5 * 1024 * 1024),
-    ]
-
-    chosen = download_youtube_tool._pick_format(formats)
-
-    assert chosen.format_id == "fits"
-
-
-def test_pick_format_falls_back_to_smallest_when_all_oversized():
-    formats = [
-        FormatOption(format_id="huge", description="4K", filesize_bytes=200 * 1024 * 1024),
-        FormatOption(format_id="less_huge", description="1080p", filesize_bytes=100 * 1024 * 1024),
-    ]
-
-    chosen = download_youtube_tool._pick_format(formats)
-
-    assert chosen.format_id == "less_huge"
+    assert result.success is True
+    assert result.attachment is None
+    assert "50 МБ" in result.text
 
 
-def test_pick_format_falls_back_to_first_when_sizes_unknown():
-    formats = [FormatOption(format_id="only", description="?", filesize_bytes=None)]
-
-    assert download_youtube_tool._pick_format(formats).format_id == "only"
+def test_sanitize_filename_strips_unsafe_characters():
+    assert download_youtube_tool._sanitize_filename('a:b"c<d>e|f?g*h') == "a_b_c_d_e_f_g_h"
 
 
-def test_pick_format_returns_none_for_empty_list():
-    assert download_youtube_tool._pick_format([]) is None
+def test_sanitize_filename_strips_slashes():
+    assert download_youtube_tool._sanitize_filename("AC/DC live") == "AC_DC live"
+
+
+def test_sanitize_filename_falls_back_when_empty():
+    assert download_youtube_tool._sanitize_filename("   ...   ") == "video"
+
+
+def test_sanitize_filename_truncates_long_titles():
+    long_title = "а" * 300
+    assert len(download_youtube_tool._sanitize_filename(long_title)) == 150

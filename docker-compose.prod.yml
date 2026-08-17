@@ -91,6 +91,7 @@ services:
       OLLAMA_URL: http://ollama:11434
       CHROMA_PERSIST_DIR: /app/data/chroma_db
       MEDIA_STORAGE_PATH: /app/data/media
+      DOWNLOAD_STORAGE_PATH: /app/data/downloads
       SCREENS_MAP_PATH: /app/screens_map.yaml
       # Baked into the image (Dockerfile.bot) — not a host-provided path
       # like the others above, but set the same way for consistency.
@@ -108,6 +109,12 @@ services:
       # Real showroom media library on the host (e.g. D:/Pappai_Media on
       # Windows) — set MEDIA_HOST_PATH in .env to override the default.
       - ${MEDIA_HOST_PATH:-./data/media}:/app/data/media
+      # Separate from the showroom library above on purpose — videos
+      # downloaded via the download_youtube tool (chat/command-triggered)
+      # land here instead, so they don't mix into Resolume's existing
+      # curated clip library or its quota/LRU-cleanup accounting. Set
+      # DOWNLOAD_HOST_PATH in .env (e.g. D:/Видео on Windows).
+      - ${DOWNLOAD_HOST_PATH:-./data/downloads}:/app/data/downloads
       # Editable without a rebuild — Resolume screen-name mapping is
       # site-specific and left for later configuration.
       - ./screens_map.yaml:/app/screens_map.yaml

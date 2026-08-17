@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     # in application code.
     MEDIA_STORAGE_PATH: str = "./data/media"
     MEDIA_STORAGE_QUOTA_GB: float = 100.0
+    # Dedicated archive for videos downloaded via the download_youtube tool
+    # — deliberately separate from MEDIA_STORAGE_PATH (the showroom's
+    # curated clip library that Resolume/quota-cleanup already manage), per
+    # explicit user decision. Bind-mounted to a real host folder (e.g.
+    # D:/Видео) via docker-compose.prod.yml's DOWNLOAD_HOST_PATH.
+    DOWNLOAD_STORAGE_PATH: str = "./data/downloads"
     SCREENS_MAP_PATH: str = "./screens_map.yaml"
     # Resolume runs on the same machine as Docker Desktop (per spec) — from
     # inside a container that's the host, not localhost. host.docker.internal
