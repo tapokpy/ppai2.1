@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services.local_llm import NEED_CLOUD_MARKER, LocalLLMClient
+from app.services.local_llm import NEED_CLOUD_MARKER, LocalLLMClient, _extract_leaked_tool_call
 
 
 @pytest.mark.asyncio
@@ -167,6 +167,38 @@ async def test_generate_with_tools_returns_empty_tool_calls_for_plain_answer():
 
     assert text == "Привет!"
     assert tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_generate_with_tools_recovers_tool_call_leaked_as_plain_text():
+    # Live-observed failure mode: instead of populating tool_calls, the
+    # model sometimes leaks the call as garbled text with a stray closing
+    # </tool_call> tag and no opening tag.
+    client = LocalLLMClient(base_url="http://localhost:11434", model="qwen2.5:7b")
+    leaked_content = 'leton\n{"name": "find_downloaded_file", "arguments": {"query": "Claude"}}\n</tool_call>'
+    client._client.chat = AsyncMock(return_value={"message": {"content": leaked_content, "tool_calls": None}})
+
+    text, tool_calls, _usage = await client.generate_with_tools("вопрос", tools=[{}])
+
+    assert text == ""
+    assert tool_calls == [{"name": "find_downloaded_file", "arguments": {"query": "Claude"}}]
+
+
+def test_extract_leaked_tool_call_parses_embedded_json():
+    content = 'noise before {"name": "calculate_power", "arguments": {"module_count": 20}} noise after'
+
+    assert _extract_leaked_tool_call(content) == {
+        "name": "calculate_power",
+        "arguments": {"module_count": 20},
+    }
+
+
+def test_extract_leaked_tool_call_returns_none_for_plain_text():
+    assert _extract_leaked_tool_call("Привет! Обычный текстовый ответ без вызова функций.") is None
+
+
+def test_extract_leaked_tool_call_returns_none_when_missing_arguments_key():
+    assert _extract_leaked_tool_call('{"name": "calculate_power"}') is None
 
 
 @pytest.mark.asyncio

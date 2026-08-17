@@ -1,7 +1,29 @@
+import re
+
 import ollama
 from loguru import logger
 
+from app.core.tool_registry import try_parse_json
+
 NEED_CLOUD_MARKER = "[NEED_CLOUD]"
+
+# Rare (live-observed, not reliably reproducible) failure mode: instead of
+# populating the native tool_calls field, the model sometimes leaks a tool
+# call as plain text — e.g. "...garbage\n{\"name\": \"find_downloaded_file\",
+# \"arguments\": {\"query\": \"Claude\"}}\n</tool_call>" — which would
+# otherwise be shown to the user as raw JSON. Only matches flat (non-nested)
+# argument objects, which covers every tool registered today.
+_LEAKED_TOOL_CALL_PATTERN = re.compile(r'\{[^{}]*"name"\s*:\s*"[^"]+"[^{}]*"arguments"\s*:\s*\{[^{}]*\}[^{}]*\}')
+
+
+def _extract_leaked_tool_call(content: str) -> dict | None:
+    match = _LEAKED_TOOL_CALL_PATTERN.search(content)
+    if not match:
+        return None
+    parsed = try_parse_json(match.group(0))
+    if isinstance(parsed, dict) and isinstance(parsed.get("name"), str) and isinstance(parsed.get("arguments"), dict):
+        return {"name": parsed["name"], "arguments": parsed["arguments"]}
+    return None
 
 
 class LocalLLMClient:
@@ -117,4 +139,12 @@ class LocalLLMClient:
             {"name": call["function"]["name"], "arguments": dict(call["function"]["arguments"])}
             for call in (message.get("tool_calls") or [])
         ]
-        return message.get("content") or "", tool_calls, usage
+        content = message.get("content") or ""
+
+        if not tool_calls and content:
+            leaked = _extract_leaked_tool_call(content)
+            if leaked:
+                logger.warning(f"Recovered a tool call leaked as plain text: {leaked['name']}")
+                return "", [leaked], usage
+
+        return content, tool_calls, usage
