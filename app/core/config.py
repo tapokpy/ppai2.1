@@ -121,10 +121,21 @@ class Settings(BaseSettings):
     # ANTHROPIC_API_KEY. Provider not chosen yet (OpenAI/Stability/other).
     IMAGE_GEN_API_KEY: str = ""
     IMAGE_GEN_PROVIDER: str = ""
+    # Per-tool kill switch, comma-separated tool names (e.g.
+    # "warehouse_lookup,list_projects") — for rolling out new tools one at a
+    # time with a live check in between, per explicit user request, rather
+    # than exposing all of them to the model at once. A disabled tool is
+    # simply never registered (app/core/dependencies.py::build_tool_registry)
+    # — invisible to the model, not just blocked at dispatch time.
+    TOOLS_DISABLED: str = ""
 
     @property
     def admin_ids(self) -> list[int]:
         return [int(x) for x in self.ADMIN_IDS.split(",") if x.strip()]
+
+    @property
+    def disabled_tools(self) -> set[str]:
+        return {x.strip() for x in self.TOOLS_DISABLED.split(",") if x.strip()}
 
 
 settings = Settings()

@@ -1,6 +1,6 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from app.core.dependencies import build_cascade_router, build_transcriber
+from app.core.dependencies import build_cascade_router, build_tool_registry, build_transcriber
 from app.core.router import CascadeRouter
 from app.services.stt import Transcriber
 
@@ -26,3 +26,29 @@ def test_build_transcriber_returns_transcriber_instance():
     transcriber = build_transcriber()
 
     assert isinstance(transcriber, Transcriber)
+
+
+def test_build_tool_registry_registers_all_tools_by_default():
+    registry = build_tool_registry(MagicMock())
+
+    names = {t.name for t in registry.list_for(is_admin=True)}
+    assert names == {
+        "calculate_power",
+        "download_youtube",
+        "find_history",
+        "get_recent_activity",
+        "find_downloaded_file",
+        "warehouse_lookup",
+        "calculate_modules",
+        "list_projects",
+    }
+
+
+def test_build_tool_registry_skips_disabled_tools():
+    with patch("app.core.dependencies.settings.TOOLS_DISABLED", "warehouse_lookup,list_projects"):
+        registry = build_tool_registry(MagicMock())
+
+    names = {t.name for t in registry.list_for(is_admin=True)}
+    assert "warehouse_lookup" not in names
+    assert "list_projects" not in names
+    assert "calculate_power" in names

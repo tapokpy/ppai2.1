@@ -10,7 +10,16 @@ from app.services.media_downloader import MediaDownloader
 from app.services.rag_engine import RAGEngine
 from app.services.resolume_controller import ResolumeController, ScreensMap
 from app.services.stt import Transcriber
-from app.services.tools import calculate_power_tool, download_youtube_tool, find_history_tool
+from app.services.tools import (
+    calculate_modules_tool,
+    calculate_power_tool,
+    download_youtube_tool,
+    find_downloaded_file_tool,
+    find_history_tool,
+    get_recent_activity_tool,
+    list_projects_tool,
+    warehouse_lookup_tool,
+)
 
 
 def build_transcriber() -> Transcriber:
@@ -42,10 +51,26 @@ def build_screens_map() -> ScreensMap:
 
 
 def build_tool_registry(media_downloader: MediaDownloader) -> ToolRegistry:
+    # Kill-switched per-tool via TOOLS_DISABLED (comma-separated names) — a
+    # disabled tool is never registered, so the model never even sees it in
+    # the schema. Lets new tools be rolled out one at a time with a live
+    # check in between, per explicit user request, instead of exposing all
+    # of them to the model in one shot.
+    all_specs = [
+        calculate_power_tool.TOOL_SPEC,
+        download_youtube_tool.build_tool_spec(media_downloader),
+        find_history_tool.TOOL_SPEC,
+        get_recent_activity_tool.TOOL_SPEC,
+        find_downloaded_file_tool.TOOL_SPEC,
+        warehouse_lookup_tool.TOOL_SPEC,
+        calculate_modules_tool.TOOL_SPEC,
+        list_projects_tool.TOOL_SPEC,
+    ]
+
     registry = ToolRegistry()
-    registry.register(calculate_power_tool.TOOL_SPEC)
-    registry.register(download_youtube_tool.build_tool_spec(media_downloader))
-    registry.register(find_history_tool.TOOL_SPEC)
+    for spec in all_specs:
+        if spec.name not in settings.disabled_tools:
+            registry.register(spec)
     # generate_image/create_chart join here once a provider is chosen /
     # the chart service is built — see the tool-calling plan, Фаза 4.
     return registry
