@@ -20,6 +20,7 @@ from app.models.sqlalchemy.project_file import ProjectFile
 from app.models.sqlalchemy.user import User
 from app.services import cad_parser
 from app.services.engineering_rag_ingest import index_engineering_doc
+from app.services.office_parser import extract_docx_text, extract_pptx_text
 from app.services.pdf_parser import chunk_text, extract_text
 from app.services.stock_import import StockTableError, parse_stock_table, upsert_stock_rows
 
@@ -29,6 +30,7 @@ DOCUMENT_TEMP_DIR = Path("data/temp")
 CAD_EXTENSIONS = {".dxf", ".dwg", ".cdr"}
 STOCK_TABLE_EXTENSIONS = {".xlsx", ".csv"}
 TEXT_EXTENSIONS = {".txt", ".md"}
+OFFICE_EXTRACTORS = {".docx": extract_docx_text, ".pptx": extract_pptx_text}
 
 # Captioning an upload with "проект3 <ID>" attaches it to that Project as a
 # config/preset file (ProjectFile) regardless of extension — the one place
@@ -65,6 +67,13 @@ def _text_extension(file_name: str | None) -> str | None:
     return ext if ext in TEXT_EXTENSIONS else None
 
 
+def _office_extension(file_name: str | None) -> str | None:
+    if not file_name:
+        return None
+    ext = Path(file_name).suffix.lower()
+    return ext if ext in OFFICE_EXTRACTORS else None
+
+
 @router.message(F.document, ShouldRespondFilter())
 async def handle_document(message: Message, bot: Bot, cascade_router: CascadeRouter, db_user: User) -> None:
     document = message.document
@@ -93,8 +102,13 @@ async def handle_document(message: Message, bot: Bot, cascade_router: CascadeRou
         await _handle_text_upload(message, bot, cascade_router, db_user, text_ext)
         return
 
+    office_ext = _office_extension(document.file_name)
+    if office_ext:
+        await _handle_office_upload(message, bot, cascade_router, db_user, office_ext)
+        return
+
     await message.answer(
-        "Пока поддерживается загрузка PDF, .txt/.md, .dxf, .dwg, .xlsx/.csv (остатки склада) — "
+        "Пока поддерживается загрузка PDF, .txt/.md, .docx, .pptx, .dxf, .dwg, .xlsx/.csv (остатки склада) — "
         ".cdr не читается ни одним инструментом."
     )
 
@@ -180,6 +194,48 @@ async def _handle_text_upload(
         session.add(
             Document(
                 source="text_upload",
+                filename=filename,
+                uploaded_by=db_user.id,
+                chunk_count=len(chunks),
+                char_count=len(text),
+                embedding_model=cascade_router.rag_engine.embedding_model_name,
+            )
+        )
+        await session.commit()
+
+    await message.answer(f"Документ «{filename}» обработан и добавлен в базу знаний ({len(chunks)} фрагм.).")
+
+
+async def _handle_office_upload(
+    message: Message, bot: Bot, cascade_router: CascadeRouter, db_user: User, ext: str
+) -> None:
+    document = message.document
+    file = await bot.get_file(document.file_id)
+    DOCUMENT_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    local_path = DOCUMENT_TEMP_DIR / f"office_{uuid4().hex}{ext}"
+
+    try:
+        await bot.download_file(file.file_path, destination=local_path)
+        text = await asyncio.to_thread(OFFICE_EXTRACTORS[ext], str(local_path))
+    finally:
+        local_path.unlink(missing_ok=True)
+
+    chunks = chunk_text(text)
+    if not chunks:
+        await message.answer("Не удалось извлечь текст из документа.")
+        return
+
+    source = "docx_upload" if ext == ".docx" else "pptx_upload"
+    filename = document.file_name or f"document{ext}"
+    cascade_router.rag_engine.add_documents(
+        texts=chunks,
+        metadatas=[{"source": source, "filename": filename, "uploaded_by": str(db_user.id)} for _ in chunks],
+    )
+
+    async with async_session_maker() as session:
+        session.add(
+            Document(
+                source=source,
                 filename=filename,
                 uploaded_by=db_user.id,
                 chunk_count=len(chunks),

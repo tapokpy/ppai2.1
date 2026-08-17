@@ -40,11 +40,18 @@ class RAGEngine:
         embedding_function: EmbeddingFunction | None = None,
         client: ClientAPI | None = None,
         embedding_model_name: str = "",
+        reranker: Any | None = None,
     ):
         self._threshold = score_threshold
         self._client = client or chromadb.PersistentClient(path=persist_dir)
         self._collection_name = collection_name
         self._embedding_model_name = embedding_model_name
+        # Optional CrossEncoder (see app/services/embeddings.py::default_reranker)
+        # — only reorders which chunks make the final top_k cut, never
+        # touches found/max_score below (a cross-encoder's raw logit isn't
+        # on the same 0..1 scale as RAG_SCORE_THRESHOLD, which is already
+        # tuned against the embedding-based hybrid score).
+        self._reranker = reranker
 
         kwargs: dict[str, Any] = {"metadata": {"hnsw:space": "cosine"}}
         if embedding_function is not None:
@@ -124,20 +131,32 @@ class RAGEngine:
 
         # Re-rank by the boosted score (not the original embedding order) so
         # a literal-match chunk promoted from deep in the candidate pool
-        # actually surfaces within the final top_k slice below.
-        order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
-        documents = [documents[i] for i in order]
-        metadatas = [metadatas[i] for i in order]
-        scores = [scores[i] for i in order]
+        # actually surfaces within the final top_k slice below. found/
+        # max_score are always derived from THIS hybrid-boosted score, even
+        # when a cross-encoder reranker (below) changes which chunks/order
+        # actually get returned — a cross-encoder's raw logit isn't on the
+        # same 0..1 scale as RAG_SCORE_THRESHOLD, which is already tuned
+        # against this hybrid score specifically.
+        hybrid_order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+        max_score = max((scores[i] for i in hybrid_order), default=0.0)
 
-        max_score = max(scores) if scores else 0.0
+        if self._reranker is not None and documents:
+            # Reranks the same full candidate pool the hybrid boost saw
+            # (not just its top_k) — a chunk that's genuinely the best
+            # semantic match but scored just under the hybrid cutoff still
+            # gets a fair chance here, same rationale as the wide candidate
+            # pool above.
+            pair_scores = self._reranker.predict([(query_text, doc) for doc in documents])
+            final_order = sorted(range(len(documents)), key=lambda i: pair_scores[i], reverse=True)[:top_k]
+        else:
+            final_order = hybrid_order
 
         return {
             "found": max_score >= self._threshold,
             "max_score": max_score,
-            "documents": documents,
-            "metadatas": metadatas,
-            "scores": scores,
+            "documents": [documents[i] for i in final_order],
+            "metadatas": [metadatas[i] for i in final_order],
+            "scores": [scores[i] for i in final_order],
         }
 
     def get_document_chunks(self, source: str, filename: str | None) -> dict:

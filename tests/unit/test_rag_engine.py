@@ -1,4 +1,5 @@
 import uuid
+from unittest.mock import MagicMock
 
 import chromadb
 import pytest
@@ -17,6 +18,19 @@ def rag_engine():
         embedding_function=FakeEmbeddingFunction(),
         client=client,
         embedding_model_name="fake-embedding-model",
+    )
+
+
+def _rag_engine_with_reranker(reranker):
+    client = chromadb.EphemeralClient()
+    return RAGEngine(
+        persist_dir="unused",
+        score_threshold=0.5,
+        collection_name=f"test-{uuid.uuid4().hex}",
+        embedding_function=FakeEmbeddingFunction(),
+        client=client,
+        embedding_model_name="fake-embedding-model",
+        reranker=reranker,
     )
 
 
@@ -196,3 +210,51 @@ def test_upsert_documents_generates_ids_when_not_given(rag_engine):
     result = rag_engine.query("Документ без явного id")
 
     assert result["found"] is True
+
+
+def test_query_reranks_documents_using_cross_encoder_scores():
+    # Reranker scores purely by document content (a marker string), so this
+    # is robust regardless of what order chromadb's own embedding-similarity
+    # ranking happens to return the two documents in.
+    def fake_predict(pairs):
+        return [1.0 if "ВАЖНО" in doc else 0.0 for _query, doc in pairs]
+
+    reranker = MagicMock()
+    reranker.predict.side_effect = fake_predict
+    engine = _rag_engine_with_reranker(reranker)
+    engine.add_documents(
+        texts=[
+            "Модуль P2.5 шаг пикселя 2.5мм яркость 1200 нит",
+            "ВАЖНО: другой релевантный факт про модуль P2.5",
+        ],
+    )
+
+    result = engine.query("Какой шаг пикселя у модуля P2.5?")
+
+    assert "ВАЖНО" in result["documents"][0]
+
+
+def test_query_found_and_max_score_unaffected_by_reranker_scores():
+    # The reranker scores everything as irrelevant (0.0) — found/max_score
+    # must still come from the hybrid embedding score, not the reranker,
+    # since RAG_SCORE_THRESHOLD is tuned against that scale, not a
+    # cross-encoder's raw logit.
+    reranker = MagicMock()
+    reranker.predict.return_value = [0.0]
+    engine = _rag_engine_with_reranker(reranker)
+    engine.add_documents(texts=["Модуль P2.5 имеет шаг пикселя 2.5мм и яркость 1200 нит"])
+
+    result = engine.query("Какой шаг пикселя у модуля P2.5?")
+
+    assert result["found"] is True
+    assert result["max_score"] >= 0.5
+
+
+def test_query_skips_reranking_when_no_documents_found():
+    reranker = MagicMock()
+    engine = _rag_engine_with_reranker(reranker)
+
+    result = engine.query("любой вопрос")
+
+    reranker.predict.assert_not_called()
+    assert result["found"] is False

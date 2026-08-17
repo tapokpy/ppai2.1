@@ -4,7 +4,7 @@ from app.core.config import settings
 from app.core.router import CascadeRouter
 from app.core.tool_registry import ToolRegistry
 from app.services.cloud_llm import CloudLLMClient
-from app.services.embeddings import default_embedding_function
+from app.services.embeddings import default_embedding_function, default_reranker
 from app.services.local_llm import LocalLLMClient
 from app.services.media_downloader import MediaDownloader
 from app.services.rag_engine import RAGEngine
@@ -19,6 +19,7 @@ from app.services.tools import (
     get_recent_activity_tool,
     list_projects_tool,
     warehouse_lookup_tool,
+    web_search_tool,
 )
 
 
@@ -66,6 +67,12 @@ def build_tool_registry(media_downloader: MediaDownloader) -> ToolRegistry:
         calculate_modules_tool.TOOL_SPEC,
         list_projects_tool.TOOL_SPEC,
     ]
+    # Empty TAVILY_API_KEY means the tool literally can't function (every
+    # call would just fail), so it's excluded from the registry entirely
+    # rather than needing a separate TOOLS_DISABLED entry too — same
+    # pattern as ANTHROPIC_API_KEY gating CLOUD_ENABLED.
+    if settings.TAVILY_API_KEY:
+        all_specs.append(web_search_tool.build_tool_spec(settings.TAVILY_API_KEY))
 
     registry = ToolRegistry()
     for spec in all_specs:
@@ -82,6 +89,7 @@ def build_cascade_router(tool_registry: ToolRegistry | None = None) -> CascadeRo
         score_threshold=settings.RAG_SCORE_THRESHOLD,
         embedding_function=default_embedding_function(settings.EMBEDDING_MODEL_NAME),
         embedding_model_name=settings.EMBEDDING_MODEL_NAME,
+        reranker=default_reranker() if settings.RERANKER_ENABLED else None,
     )
     local_llm = LocalLLMClient(
         base_url=settings.OLLAMA_URL,

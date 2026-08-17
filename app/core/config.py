@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     RAG_SCORE_THRESHOLD: float = 0.75
     CHROMA_PERSIST_DIR: str = "./data/chroma_db"
     EMBEDDING_MODEL_NAME: str = "all-MiniLM-L6-v2"
+    # Local cross-encoder reranking of retrieved chunks (see
+    # app/services/embeddings.py::default_reranker) — only reorders which
+    # chunks make the final context, never affects the found/max_score
+    # threshold decision above. Kill-switchable without a redeploy in case
+    # it ever needs to be turned off quickly.
+    RERANKER_ENABLED: bool = True
 
     # Database
     POSTGRES_DSN: str = "postgresql+asyncpg://ppai:ppai@localhost:5432/ppai"
@@ -128,6 +134,10 @@ class Settings(BaseSettings):
     # simply never registered (app/core/dependencies.py::build_tool_registry)
     # — invisible to the model, not just blocked at dispatch time.
     TOOLS_DISABLED: str = ""
+    # Empty = web_search tool not registered at all (not just disabled) —
+    # same pattern as ANTHROPIC_API_KEY/IMAGE_GEN_API_KEY. Get a key at
+    # tavily.com.
+    TAVILY_API_KEY: str = ""
 
     @property
     def admin_ids(self) -> list[int]:

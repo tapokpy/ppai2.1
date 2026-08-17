@@ -28,8 +28,8 @@ def _mock_session_maker():
 
 
 @pytest.mark.asyncio
-async def test_handle_document_rejects_non_pdf():
-    message = _make_message("report.docx", mime_type="application/vnd.openxmlformats")
+async def test_handle_document_rejects_unsupported_extension():
+    message = _make_message("video.mp4", mime_type="video/mp4")
     bot = SimpleNamespace(get_file=AsyncMock(), download_file=AsyncMock())
     cascade_router = MagicMock()
     db_user = SimpleNamespace(id=1)
@@ -77,6 +77,87 @@ async def test_handle_document_ingests_pdf_into_rag(tmp_path):
     assert document_row.uploaded_by == 42
     assert document_row.chunk_count == 1
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_document_ingests_docx_into_rag(tmp_path):
+    message = _make_message("report.docx", mime_type="application/vnd.openxmlformats")
+    bot = SimpleNamespace(
+        get_file=AsyncMock(return_value=SimpleNamespace(file_path="docs/file123.docx")),
+        download_file=AsyncMock(),
+    )
+    cascade_router = MagicMock()
+    cascade_router.rag_engine.embedding_model_name = "all-MiniLM-L6-v2"
+    db_user = SimpleNamespace(id=42)
+    session_maker, session = _mock_session_maker()
+
+    with (
+        patch.dict(
+            "app.bot.handlers.documents.OFFICE_EXTRACTORS",
+            {".docx": MagicMock(return_value="some extracted text")},
+        ),
+        patch("app.bot.handlers.documents.DOCUMENT_TEMP_DIR", tmp_path),
+        patch("app.bot.handlers.documents.async_session_maker", session_maker),
+    ):
+        await handle_document(message, bot, cascade_router, db_user)
+
+    cascade_router.rag_engine.add_documents.assert_called_once()
+    call_kwargs = cascade_router.rag_engine.add_documents.call_args.kwargs
+    assert call_kwargs["texts"] == ["some extracted text"]
+    assert call_kwargs["metadatas"][0]["source"] == "docx_upload"
+    assert call_kwargs["metadatas"][0]["filename"] == "report.docx"
+
+    document_row = session.add.call_args.args[0]
+    assert document_row.source == "docx_upload"
+
+
+@pytest.mark.asyncio
+async def test_handle_document_ingests_pptx_into_rag(tmp_path):
+    message = _make_message("deck.pptx", mime_type="application/vnd.openxmlformats-presentation")
+    bot = SimpleNamespace(
+        get_file=AsyncMock(return_value=SimpleNamespace(file_path="docs/file123.pptx")),
+        download_file=AsyncMock(),
+    )
+    cascade_router = MagicMock()
+    cascade_router.rag_engine.embedding_model_name = "all-MiniLM-L6-v2"
+    db_user = SimpleNamespace(id=42)
+    session_maker, session = _mock_session_maker()
+
+    with (
+        patch.dict(
+            "app.bot.handlers.documents.OFFICE_EXTRACTORS",
+            {".pptx": MagicMock(return_value="Слайд 1:\nтекст слайда")},
+        ),
+        patch("app.bot.handlers.documents.DOCUMENT_TEMP_DIR", tmp_path),
+        patch("app.bot.handlers.documents.async_session_maker", session_maker),
+    ):
+        await handle_document(message, bot, cascade_router, db_user)
+
+    call_kwargs = cascade_router.rag_engine.add_documents.call_args.kwargs
+    assert call_kwargs["metadatas"][0]["source"] == "pptx_upload"
+
+    document_row = session.add.call_args.args[0]
+    assert document_row.source == "pptx_upload"
+
+
+@pytest.mark.asyncio
+async def test_handle_document_reports_when_office_text_empty(tmp_path):
+    message = _make_message("empty.docx", mime_type="application/vnd.openxmlformats")
+    bot = SimpleNamespace(
+        get_file=AsyncMock(return_value=SimpleNamespace(file_path="docs/file123.docx")),
+        download_file=AsyncMock(),
+    )
+    cascade_router = MagicMock()
+    db_user = SimpleNamespace(id=42)
+
+    with (
+        patch.dict("app.bot.handlers.documents.OFFICE_EXTRACTORS", {".docx": MagicMock(return_value="")}),
+        patch("app.bot.handlers.documents.DOCUMENT_TEMP_DIR", tmp_path),
+    ):
+        await handle_document(message, bot, cascade_router, db_user)
+
+    cascade_router.rag_engine.add_documents.assert_not_called()
+    message.answer.assert_awaited_once_with("Не удалось извлечь текст из документа.")
 
 
 @pytest.mark.asyncio
