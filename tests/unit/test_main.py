@@ -28,6 +28,7 @@ async def test_lifespan_disposes_engine_on_shutdown():
     with (
         patch("app.main.engine", fake_engine),
         patch("app.main.build_cascade_router", return_value=MagicMock()) as build_mock,
+        patch("app.main.configure_file_logging"),
     ):
         async with app.router.lifespan_context(app):
             pass
