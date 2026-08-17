@@ -5,6 +5,7 @@ from typing import Any
 import chromadb
 from chromadb import ClientAPI
 from chromadb.api.types import EmbeddingFunction
+from loguru import logger
 
 # Common short Russian/English question words excluded from the hybrid boost
 # below — without this, a generic word like "такое" or "что" could spuriously
@@ -98,7 +99,19 @@ class RAGEngine:
         # the literal-match boost below would never even see that chunk to
         # promote it, since it wouldn't be in the candidate set at all.
         candidate_k = max(top_k, _MIN_CANDIDATE_POOL)
-        results = self._collection.query(query_texts=[query_text], n_results=candidate_k)
+        try:
+            results = self._collection.query(query_texts=[query_text], n_results=candidate_k)
+        except Exception as exc:
+            # chromadb's local HNSW index has occasionally thrown "Cannot
+            # return the results in a contigious 2D array" for reasons not
+            # fully understood (observed live, not reliably reproducible) —
+            # letting that propagate crashes the ENTIRE cascade with no
+            # reply to the user at all, instead of just degrading to "no
+            # RAG context" and letting local/cloud still answer. A RAG miss
+            # is an expected, handled outcome (found=False below); an
+            # external index error should degrade the same way, not crash.
+            logger.error(f"RAG query failed, degrading to no-context: {exc}")
+            return {"found": False, "max_score": 0.0, "documents": [], "metadatas": [], "scores": []}
 
         documents = results["documents"][0] if results["documents"] else []
         metadatas = results["metadatas"][0] if results["metadatas"] else []

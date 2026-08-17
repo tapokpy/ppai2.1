@@ -189,6 +189,17 @@ def test_query_empty_collection_returns_not_found(rag_engine):
     assert result["documents"] == []
 
 
+def test_query_degrades_to_not_found_when_chromadb_raises(rag_engine, monkeypatch):
+    def _boom(*args, **kwargs):
+        raise RuntimeError("Cannot return the results in a contigious 2D array. Probably ef or M is too small")
+
+    monkeypatch.setattr(rag_engine._collection, "query", _boom)
+
+    result = rag_engine.query("любой вопрос")
+
+    assert result == {"found": False, "max_score": 0.0, "documents": [], "metadatas": [], "scores": []}
+
+
 def test_upsert_documents_overwrites_existing_id(rag_engine):
     rag_engine.upsert_documents(
         texts=["Первая версия документа"], metadatas=[{"v": 1}], ids=["doc:1"]
