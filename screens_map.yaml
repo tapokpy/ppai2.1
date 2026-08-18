@@ -22,6 +22,8 @@
 #     - screen: Левый пилон
 #       column: 3
 
-screens: {}
+screens:
+  Шоурум:
+    layer: 1
 
 presets: {}

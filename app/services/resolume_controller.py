@@ -91,6 +91,21 @@ class ResolumeController:
         except OSError as exc:
             raise ResolumeUnavailableError(str(exc)) from exc
 
+    def trigger_column(self, column: int) -> None:
+        """Fires Resolume's documented OSC address for connecting an entire
+        column: /composition/columns/{column}/connect — triggers every
+        layer's clip in that column at once (a scene switch), unlike
+        trigger_clip which only affects one named layer. This is the
+        right call for a single physical screen composited from several
+        layers (background/overlay/text), where "switch to clip N" means
+        "activate column N across the whole composition", not "change
+        just one layer and leave the others as they were."""
+        try:
+            client = SimpleUDPClient(self._osc_host, self._osc_port)
+            client.send_message(f"/composition/columns/{column}/connect", 1)
+        except OSError as exc:
+            raise ResolumeUnavailableError(str(exc)) from exc
+
     async def is_reachable(self) -> bool:
         """Best-effort REST health check — the only way to actually confirm
         Resolume is up, since OSC gives no delivery confirmation."""

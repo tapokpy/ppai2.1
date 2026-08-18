@@ -11,7 +11,6 @@ from app.bot.handlers.showroom import (
     UNKNOWN_COMMAND_REPLY,
     handle_showroom_command,
 )
-from app.core.showroom_parser import ClipCommand, PresetCommand
 from app.services.resolume_controller import ResolumeUnavailableError, ScreensMap
 
 
@@ -49,10 +48,12 @@ async def test_reports_when_no_screens_configured():
 
 @pytest.mark.asyncio
 async def test_asks_clarifying_question_when_screen_ambiguous():
+    # Only ambiguous with 2+ screens configured — a single screen never
+    # needs disambiguation (see the dedicated auto-select test below).
     message = SimpleNamespace(text="шоурум3 включи 2 колонку", from_user=SimpleNamespace(id=111), answer=AsyncMock())
     local_llm = AsyncMock()
     local_llm.generate = AsyncMock(return_value='{"type": "clip", "screen": null, "column": 2}')
-    screens_map = _screens_map({"Главный фасад": 1})
+    screens_map = _screens_map({"Главный фасад": 1, "Левый пилон": 2})
 
     with patch("app.bot.handlers.admin.settings") as settings_mock:
         settings_mock.admin_ids = [111]
@@ -60,6 +61,25 @@ async def test_asks_clarifying_question_when_screen_ambiguous():
 
     reply = message.answer.call_args.args[0]
     assert "Главный фасад" in reply
+    assert "Левый пилон" in reply
+
+
+@pytest.mark.asyncio
+async def test_auto_selects_screen_when_only_one_configured():
+    # The real showroom is a single physical screen — asking "on which
+    # screen" would be pure friction when there's only one possible answer.
+    message = SimpleNamespace(text="шоурум3 6 колонку", from_user=SimpleNamespace(id=111), answer=AsyncMock())
+    local_llm = AsyncMock()
+    local_llm.generate = AsyncMock(return_value='{"type": "clip", "screen": null, "column": 6}')
+    resolume_controller = MagicMock()
+    screens_map = _screens_map({"Шоурум": 1})
+
+    with patch("app.bot.handlers.admin.settings") as settings_mock:
+        settings_mock.admin_ids = [111]
+        await handle_showroom_command(message, local_llm, resolume_controller, screens_map)
+
+    resolume_controller.trigger_column.assert_called_once_with(6)
+    assert "Шоурум" in message.answer.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -96,7 +116,7 @@ async def test_triggers_clip_when_screen_and_column_known():
         settings_mock.admin_ids = [111]
         await handle_showroom_command(message, local_llm, resolume_controller, screens_map)
 
-    resolume_controller.trigger_clip.assert_called_once_with(1, 3)
+    resolume_controller.trigger_column.assert_called_once_with(3)
     assert "Главный фасад" in message.answer.call_args.args[0]
 
 
@@ -110,7 +130,7 @@ async def test_reports_resolume_unavailable():
         return_value='{"type": "clip", "screen": "Главный фасад", "column": 3}'
     )
     resolume_controller = MagicMock()
-    resolume_controller.trigger_clip.side_effect = ResolumeUnavailableError("no route to host")
+    resolume_controller.trigger_column.side_effect = ResolumeUnavailableError("no route to host")
     screens_map = _screens_map({"Главный фасад": 1})
 
     with patch("app.bot.handlers.admin.settings") as settings_mock:
@@ -135,9 +155,8 @@ async def test_runs_preset_triggering_every_step():
         settings_mock.admin_ids = [111]
         await handle_showroom_command(message, local_llm, resolume_controller, screens_map)
 
-    assert resolume_controller.trigger_clip.call_count == 2
-    resolume_controller.trigger_clip.assert_any_call(1, 3)
-    resolume_controller.trigger_clip.assert_any_call(2, 3)
+    assert resolume_controller.trigger_column.call_count == 2
+    resolume_controller.trigger_column.assert_any_call(3)
     message.answer.assert_awaited_once_with("Пресет «Ночной режим» запущен.")
 
 

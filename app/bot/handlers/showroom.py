@@ -67,8 +67,15 @@ async def _run_preset(
         return
 
     try:
-        for layer, column in steps:
-            resolume_controller.trigger_clip(layer, column)
+        # Column-connect (not per-layer clip-connect) — the real showroom
+        # is one physical screen composited from several layers, so
+        # "activate this step" means switching the whole column, which
+        # moves every layer's clip together. The per-step layer number in
+        # screens_map.yaml is unused here (kept only so presets can still
+        # be authored the same way if a second physical screen is ever
+        # added); only the column matters for a single-screen setup.
+        for _layer, column in steps:
+            resolume_controller.trigger_column(column)
     except ResolumeUnavailableError as exc:
         logger.warning(f"Resolume unavailable while running preset '{command.preset}': {exc}")
         await message.answer(RESOLUME_UNAVAILABLE_REPLY.format(error=str(exc)))
@@ -80,12 +87,20 @@ async def _run_preset(
 async def _run_clip(
     message: Message, command: ClipCommand, resolume_controller: ResolumeController, screens_map: ScreensMap
 ) -> None:
-    if command.screen is None:
-        await message.answer(_clarify_screen_reply(screens_map.screen_names))
-        return
+    screen_name = command.screen
+    # A single configured screen never needs disambiguation — the real
+    # showroom is one physical output, so asking "on which screen" for
+    # every command would just be friction for a question with only one
+    # possible answer. Multiple screens still ask, same as before.
+    if screen_name is None:
+        if len(screens_map.screen_names) == 1:
+            screen_name = screens_map.screen_names[0]
+        else:
+            await message.answer(_clarify_screen_reply(screens_map.screen_names))
+            return
 
     try:
-        target = screens_map.get_screen(command.screen)
+        screens_map.get_screen(screen_name)
     except ScreenNotFoundError:
         await message.answer(_clarify_screen_reply(screens_map.screen_names))
         return
@@ -95,10 +110,15 @@ async def _run_clip(
         return
 
     try:
-        resolume_controller.trigger_clip(target.layer, command.column)
+        # Column-connect, not per-layer clip-connect — see _run_preset's
+        # comment above for why: this showroom is one physical screen
+        # composited from several layers, so switching "the clip" means
+        # switching the whole column (every layer moves together), not
+        # just one layer while the others stay on their old clip.
+        resolume_controller.trigger_column(command.column)
     except ResolumeUnavailableError as exc:
         logger.warning(f"Resolume unavailable: {exc}")
         await message.answer(RESOLUME_UNAVAILABLE_REPLY.format(error=str(exc)))
         return
 
-    await message.answer(f"Переключил «{command.screen}» на ролик {command.column}.")
+    await message.answer(f"Переключил «{screen_name}» на ролик {command.column}.")

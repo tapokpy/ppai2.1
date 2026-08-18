@@ -102,6 +102,24 @@ def test_trigger_clip_wraps_os_error():
             controller.trigger_clip(layer=1, column=1)
 
 
+def test_trigger_column_sends_correct_osc_address():
+    controller = ResolumeController(osc_host="127.0.0.1", osc_port=7000, rest_base_url="http://x")
+    mock_client = MagicMock()
+
+    with patch("app.services.resolume_controller.SimpleUDPClient", return_value=mock_client):
+        controller.trigger_column(column=6)
+
+    mock_client.send_message.assert_called_once_with("/composition/columns/6/connect", 1)
+
+
+def test_trigger_column_wraps_os_error():
+    controller = ResolumeController(osc_host="127.0.0.1", osc_port=7000, rest_base_url="http://x")
+
+    with patch("app.services.resolume_controller.SimpleUDPClient", side_effect=OSError("bad host")):
+        with pytest.raises(ResolumeUnavailableError):
+            controller.trigger_column(column=1)
+
+
 @pytest.mark.asyncio
 async def test_is_reachable_true_on_200():
     controller = ResolumeController(osc_host="x", osc_port=7000, rest_base_url="http://resolume/api/v1")
