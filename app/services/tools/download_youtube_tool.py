@@ -63,6 +63,14 @@ async def run(url: str) -> ToolResult:
         except yt_dlp.utils.DownloadError as exc:
             if "403" not in str(exc) and "Forbidden" not in str(exc):
                 raise
+            # The primary attempt can fail partway through an adaptive
+            # stream it already started writing (e.g. the video track
+            # succeeds, then the audio track 403s) — observed live as
+            # orphaned .f*.mp4.part files left behind in the archive dir
+            # on every 403. Clear anything under this run's temp_basename
+            # before the fallback writes its own file under the same name.
+            for leftover in download_dir.glob(f"{temp_basename}*"):
+                leftover.unlink(missing_ok=True)
 
         # YouTube periodically breaks the signed URLs of adaptive (split
         # video+audio) streams while leaving the one remaining progressive

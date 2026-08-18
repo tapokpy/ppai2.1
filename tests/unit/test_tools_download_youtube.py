@@ -108,6 +108,48 @@ async def test_run_falls_back_to_android_360p_on_403(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_run_cleans_up_orphaned_partial_before_fallback(tmp_path):
+    # The primary attempt can fail partway through an adaptive stream it
+    # already started writing (e.g. video track succeeds, audio track
+    # 403s) — this simulates that leftover .part file and checks the
+    # fallback path clears it instead of leaving it as permanent clutter.
+    fixed_uuid = MagicMock(hex="deadbeef")
+    leftover = tmp_path / ".tmp_deadbeef.f401.mp4.part"
+    leftover.write_bytes(b"orphaned partial video track")
+
+    downloaded_source = tmp_path / ".tmp_deadbeef.mp4"
+    downloaded_source.write_bytes(b"fake source video")
+
+    failing_ydl = MagicMock()
+    failing_ydl.__enter__ = MagicMock(return_value=failing_ydl)
+    failing_ydl.__exit__ = MagicMock(return_value=False)
+    failing_ydl.extract_info.side_effect = yt_dlp.utils.DownloadError(
+        "ERROR: unable to download video data: HTTP Error 403: Forbidden"
+    )
+    succeeding_ydl = _fake_ydl(info={"title": "Крутое видео"}, prepared_filename=str(downloaded_source))
+
+    async def fake_transcode(_input_path, output_path):
+        Path(output_path).write_bytes(b"fake transcoded video")
+
+    session = _fake_session()
+
+    with (
+        patch("app.services.tools.download_youtube_tool.settings.DOWNLOAD_STORAGE_PATH", str(tmp_path)),
+        patch("app.services.tools.download_youtube_tool.uuid4", return_value=fixed_uuid),
+        patch(
+            "app.services.tools.download_youtube_tool.yt_dlp.YoutubeDL",
+            side_effect=[failing_ydl, succeeding_ydl],
+        ),
+        patch("app.services.tools.download_youtube_tool.transcode_to_h264_mp4", fake_transcode),
+        patch("app.services.tools.download_youtube_tool.async_session_maker", lambda: _FakeSessionCtx(session)),
+    ):
+        result = await download_youtube_tool.run(url="https://youtu.be/abc")
+
+    assert result.success is True
+    assert not leftover.exists()
+
+
+@pytest.mark.asyncio
 async def test_run_does_not_fall_back_on_non_403_download_error(tmp_path):
     failing_ydl = MagicMock()
     failing_ydl.__enter__ = MagicMock(return_value=failing_ydl)
