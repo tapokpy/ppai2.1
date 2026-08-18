@@ -57,7 +57,15 @@ class MediaDownloader:
         doesn't stall the bot's event loop."""
 
         def _probe() -> dict:
-            with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
+            # noplaylist=True — without it, a URL that carries both a video
+            # id and a playlist/radio id (e.g. YouTube's auto-generated
+            # "RD..." mix playlists, which can be dozens of videos or
+            # effectively unbounded) makes yt-dlp extract the WHOLE
+            # playlist instead of just the one video the user actually
+            # linked — observed live as the bot never replying at all
+            # (extraction ran long enough it looked hung). The user sent
+            # one link, they meant one video.
+            with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "noplaylist": True}) as ydl:
                 return ydl.extract_info(url, download=False)
 
         try:
@@ -136,6 +144,7 @@ class MediaDownloader:
                 "outtmpl": destination_template,
                 "quiet": True,
                 "no_warnings": True,
+                "noplaylist": True,
             }
             if progress_hook:
                 opts["progress_hooks"] = [progress_hook]

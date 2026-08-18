@@ -53,6 +53,21 @@ async def test_probe_returns_title_and_video_formats(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_probe_disables_playlist_extraction(tmp_path):
+    # A URL with both a video id and a playlist/radio id (e.g. YouTube's
+    # auto-generated "RD..." mix playlists) must extract just that one
+    # video, not the whole (potentially unbounded) playlist.
+    downloader = MediaDownloader(storage_dir=str(tmp_path), quota_gb=100)
+    mock_ydl = MagicMock()
+    mock_ydl.__enter__.return_value.extract_info.return_value = {"title": "x", "formats": []}
+
+    with patch("app.services.media_downloader.yt_dlp.YoutubeDL", return_value=mock_ydl) as ydl_ctor:
+        await downloader.probe("https://example.com/watch?v=abc&list=RDabc&start_radio=1")
+
+    assert ydl_ctor.call_args.args[0]["noplaylist"] is True
+
+
+@pytest.mark.asyncio
 async def test_probe_raises_media_download_error_on_failure(tmp_path):
     downloader = MediaDownloader(storage_dir=str(tmp_path), quota_gb=100)
     mock_ydl = MagicMock()
@@ -163,6 +178,27 @@ async def test_download_saves_file_and_db_row(clean_db, tmp_path):
     async with async_session_maker() as session:
         stored = (await session.execute(select(ShowroomMedia))).scalars().all()
     assert len(stored) == 1
+
+
+@pytest.mark.asyncio
+async def test_download_disables_playlist_extraction(clean_db, tmp_path):
+    downloader = MediaDownloader(storage_dir=str(tmp_path), quota_gb=100)
+    expected_path = tmp_path / "video123.mp4"
+
+    def _fake_extract_info(url, download):
+        expected_path.write_bytes(b"fake video content")
+        return {"id": "video123", "ext": "mp4"}
+
+    mock_ydl = MagicMock()
+    mock_ydl.__enter__.return_value.extract_info.side_effect = _fake_extract_info
+    mock_ydl.__enter__.return_value.prepare_filename.return_value = str(expected_path)
+
+    with patch("app.services.media_downloader.yt_dlp.YoutubeDL", return_value=mock_ydl) as ydl_ctor:
+        await downloader.download(
+            "https://example.com/watch?v=video123&list=RDvideo123&start_radio=1", "137", "title"
+        )
+
+    assert ydl_ctor.call_args.args[0]["noplaylist"] is True
 
 
 @pytest.mark.asyncio

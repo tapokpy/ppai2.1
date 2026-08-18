@@ -2,6 +2,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yt_dlp
 
 from app.core.tool_registry import ToolAttachment
 from app.services.tools import download_youtube_tool
@@ -48,7 +49,7 @@ async def test_run_downloads_transcodes_and_saves(tmp_path):
 
     with (
         patch("app.services.tools.download_youtube_tool.settings.DOWNLOAD_STORAGE_PATH", str(tmp_path)),
-        patch("app.services.tools.download_youtube_tool.yt_dlp.YoutubeDL", return_value=ydl),
+        patch("app.services.tools.download_youtube_tool.yt_dlp.YoutubeDL", return_value=ydl) as ydl_ctor,
         patch("app.services.tools.download_youtube_tool.transcode_to_h264_mp4", fake_transcode),
         patch("app.services.tools.download_youtube_tool.async_session_maker", lambda: _FakeSessionCtx(session)),
     ):
@@ -63,6 +64,70 @@ async def test_run_downloads_transcodes_and_saves(tmp_path):
     assert not downloaded_source.exists()
     session.add.assert_called_once()
     session.commit.assert_awaited_once()
+    # A URL with both a video id and a playlist/radio id must extract just
+    # that one video, not the whole (potentially unbounded) playlist.
+    assert ydl_ctor.call_args.args[0]["noplaylist"] is True
+
+
+@pytest.mark.asyncio
+async def test_run_falls_back_to_android_360p_on_403(tmp_path):
+    downloaded_source = tmp_path / ".tmp_abc.mp4"
+    downloaded_source.write_bytes(b"fake source video")
+
+    failing_ydl = MagicMock()
+    failing_ydl.__enter__ = MagicMock(return_value=failing_ydl)
+    failing_ydl.__exit__ = MagicMock(return_value=False)
+    failing_ydl.extract_info.side_effect = yt_dlp.utils.DownloadError(
+        "ERROR: unable to download video data: HTTP Error 403: Forbidden"
+    )
+    succeeding_ydl = _fake_ydl(info={"title": "Крутое видео"}, prepared_filename=str(downloaded_source))
+
+    async def fake_transcode(_input_path, output_path):
+        Path(output_path).write_bytes(b"fake transcoded video")
+
+    session = _fake_session()
+
+    with (
+        patch("app.services.tools.download_youtube_tool.settings.DOWNLOAD_STORAGE_PATH", str(tmp_path)),
+        patch(
+            "app.services.tools.download_youtube_tool.yt_dlp.YoutubeDL",
+            side_effect=[failing_ydl, succeeding_ydl],
+        ) as ydl_ctor,
+        patch("app.services.tools.download_youtube_tool.transcode_to_h264_mp4", fake_transcode),
+        patch("app.services.tools.download_youtube_tool.async_session_maker", lambda: _FakeSessionCtx(session)),
+    ):
+        result = await download_youtube_tool.run(url="https://youtu.be/abc")
+
+    assert result.success is True
+    assert "Крутое видео" in result.text
+    assert "360p" in result.text
+    assert ydl_ctor.call_count == 2
+    fallback_opts = ydl_ctor.call_args_list[1].args[0]
+    assert fallback_opts["extractor_args"] == {"youtube": {"player_client": ["android"]}}
+    assert fallback_opts["format"] == "best"
+
+
+@pytest.mark.asyncio
+async def test_run_does_not_fall_back_on_non_403_download_error(tmp_path):
+    failing_ydl = MagicMock()
+    failing_ydl.__enter__ = MagicMock(return_value=failing_ydl)
+    failing_ydl.__exit__ = MagicMock(return_value=False)
+    failing_ydl.extract_info.side_effect = yt_dlp.utils.DownloadError(
+        "ERROR: [youtube] abc: Video unavailable"
+    )
+
+    with (
+        patch("app.services.tools.download_youtube_tool.settings.DOWNLOAD_STORAGE_PATH", str(tmp_path)),
+        patch(
+            "app.services.tools.download_youtube_tool.yt_dlp.YoutubeDL",
+            return_value=failing_ydl,
+        ) as ydl_ctor,
+    ):
+        result = await download_youtube_tool.run(url="https://youtu.be/abc")
+
+    assert result.success is False
+    assert "Video unavailable" in result.error
+    assert ydl_ctor.call_count == 1
 
 
 @pytest.mark.asyncio

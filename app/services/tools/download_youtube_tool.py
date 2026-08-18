@@ -32,7 +32,22 @@ async def run(url: str) -> ToolResult:
     download_dir.mkdir(parents=True, exist_ok=True)
     temp_basename = f".tmp_{uuid4().hex}"
 
-    def _download() -> tuple[str, str]:
+    def _base_opts() -> dict:
+        return {
+            "outtmpl": str(download_dir / temp_basename) + ".%(ext)s",
+            "merge_output_format": "mp4",
+            "quiet": True,
+            "no_warnings": True,
+            # Without this, a URL that carries both a video id and a
+            # playlist/radio id (e.g. YouTube's auto-generated "RD..." mix
+            # playlists) makes yt-dlp extract the WHOLE playlist instead of
+            # just the one video that was actually linked — observed live
+            # as the bot never replying at all (extraction ran long enough
+            # it looked hung). Same fix as media_downloader.py's probe/download.
+            "noplaylist": True,
+        }
+
+    def _download() -> tuple[str, str, bool]:
         # bestvideo+bestaudio/best (not a single fixed format_id): yt-dlp
         # picks the best available quality and muxes video+audio itself
         # (via its own ffmpeg call) — simpler and more robust than manually
@@ -40,19 +55,35 @@ async def run(url: str) -> ToolResult:
         # format_id would produce a silent file. The explicit re-encode
         # below is what actually guarantees the H.264/CRF profile, not this
         # format selector — this step only needs *a* usable source file.
+        try:
+            opts = {**_base_opts(), "format": "bestvideo+bestaudio/best"}
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                return ydl.prepare_filename(info), info.get("title") or "video", False
+        except yt_dlp.utils.DownloadError as exc:
+            if "403" not in str(exc) and "Forbidden" not in str(exc):
+                raise
+
+        # YouTube periodically breaks the signed URLs of adaptive (split
+        # video+audio) streams while leaving the one remaining progressive
+        # format (itag 18, 360p) untouched — observed live (2026-08-18):
+        # every bestvideo+bestaudio attempt got HTTP 403 regardless of
+        # player_client (web/tv_embedded/android_vr all failed identically
+        # even on the latest yt-dlp release), while the "android" client's
+        # single progressive format downloaded cleanly. This is YouTube-
+        # side, not a stale-yt-dlp problem, and self-resolves on their end
+        # eventually — a quality fallback beats a hard failure until then.
         opts = {
-            "format": "bestvideo+bestaudio/best",
-            "outtmpl": str(download_dir / temp_basename) + ".%(ext)s",
-            "merge_output_format": "mp4",
-            "quiet": True,
-            "no_warnings": True,
+            **_base_opts(),
+            "format": "best",
+            "extractor_args": {"youtube": {"player_client": ["android"]}},
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            return ydl.prepare_filename(info), info.get("title") or "video"
+            return ydl.prepare_filename(info), info.get("title") or "video", True
 
     try:
-        downloaded_path_str, title = await asyncio.to_thread(_download)
+        downloaded_path_str, title, degraded_quality = await asyncio.to_thread(_download)
     except Exception as exc:
         return ToolResult(text=f"Не получилось скачать видео: {exc}", success=False, error=str(exc))
 
@@ -74,6 +105,8 @@ async def run(url: str) -> ToolResult:
         await session.commit()
 
     text = f"«{title}» сохранено: {final_path}"
+    if degraded_quality:
+        text += "\n(YouTube сейчас блокирует высокое качество для этого видео — сохранено в 360p)"
     attachment = None
     if size_bytes <= _TELEGRAM_UPLOAD_LIMIT_BYTES:
         attachment = ToolAttachment(file_path=str(final_path), kind="document")
