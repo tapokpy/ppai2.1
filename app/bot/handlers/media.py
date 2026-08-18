@@ -114,7 +114,8 @@ async def _run_download(
         chosen = pending.formats.get(format_id)
         if chosen and chosen.filesize_bytes:
             await media_downloader.ensure_quota(chosen.filesize_bytes)
-        media = await media_downloader.download(pending.url, format_id, pending.title, progress_hook=progress_hook)
+        outcome = await media_downloader.download(pending.url, format_id, pending.title, progress_hook=progress_hook)
+        media = outcome.media
     except MediaQuotaError as exc:
         await bot.edit_message_text(QUOTA_EXCEEDED_REPLY.format(error=str(exc)), chat_id=chat_id, message_id=message_id)
         return
@@ -134,9 +135,10 @@ async def _run_download(
         # forever over what's ultimately a non-essential side effect.
         logger.warning(f"Failed to index showroom media {media.id} into RAG: {exc}")
 
-    await bot.edit_message_text(
-        f"✅ «{media.title}» загружено и добавлено в библиотеку шоурума.", chat_id=chat_id, message_id=message_id
-    )
+    success_text = f"✅ «{media.title}» загружено и добавлено в библиотеку шоурума."
+    if outcome.degraded_quality:
+        success_text += "\n(YouTube сейчас блокирует высокое качество для этого видео — сохранено в 360p)"
+    await bot.edit_message_text(success_text, chat_id=chat_id, message_id=message_id)
 
 
 @router.callback_query(F.data.startswith("media_dl:"))

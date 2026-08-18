@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from uuid import uuid4
 
 import yt_dlp
 from loguru import logger
@@ -34,6 +35,16 @@ class FormatOption:
 class ProbeResult:
     title: str
     formats: list[FormatOption]
+
+
+@dataclass
+class DownloadOutcome:
+    media: ShowroomMedia
+    # True when the caller's chosen format_id 403'd and download() had to
+    # retry with the guaranteed-working 360p fallback (see download()) —
+    # callers should tell the user their picked quality wasn't honored,
+    # not silently hand back a lower-res file under the quality they asked for.
+    degraded_quality: bool
 
 
 def _human_size(num_bytes: int | None) -> str:
@@ -135,33 +146,80 @@ class MediaDownloader:
         format_id: str,
         title: str,
         progress_hook: Callable[[dict], None] | None = None,
-    ) -> ShowroomMedia:
-        destination_template = str(self._storage_dir / "%(id)s.%(ext)s")
+    ) -> DownloadOutcome:
+        # A per-call temp name (not the final "%(id)s.%(ext)s" convention)
+        # so a 403 partway through can be cleaned up by glob before the
+        # fallback retry writes under the same name — the final id isn't
+        # known until extract_info() succeeds, so there'd otherwise be
+        # nothing to scope a cleanup glob to. Renamed to the real
+        # "{id}.{ext}" convention (unchanged for every other caller) once
+        # a download actually succeeds.
+        temp_basename = f".tmp_{uuid4().hex}"
 
-        def _run() -> str:
-            opts = {
-                "format": format_id,
-                "outtmpl": destination_template,
+        def _base_opts() -> dict:
+            opts: dict = {
+                "outtmpl": str(self._storage_dir / temp_basename) + ".%(ext)s",
                 "quiet": True,
                 "no_warnings": True,
                 "noplaylist": True,
             }
             if progress_hook:
                 opts["progress_hooks"] = [progress_hook]
+            return opts
+
+        def _run() -> tuple[str, str, bool]:
+            try:
+                opts = {**_base_opts(), "format": format_id}
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    return ydl.prepare_filename(info), info.get("id") or temp_basename.lstrip("."), False
+            except yt_dlp.utils.DownloadError as exc:
+                if "403" not in str(exc) and "Forbidden" not in str(exc):
+                    raise
+                # The chosen format can 403 partway through (e.g. the video
+                # track downloads fine, the audio track doesn't) — clear
+                # anything this call wrote under its own temp_basename
+                # before the fallback writes its own file under the same
+                # name. Scoped to temp_basename specifically, not to
+                # every *.part file, since handle_format_choice
+                # (app/bot/handlers/media.py) fires downloads as bare
+                # asyncio.create_task calls with no lock — several
+                # downloads can be in flight at once, and a broader glob
+                # risks deleting another concurrent download's legitimate
+                # partial file.
+                for leftover in self._storage_dir.glob(f"{temp_basename}*"):
+                    leftover.unlink(missing_ok=True)
+
+            # YouTube periodically breaks the signed URLs of adaptive
+            # (split video+audio) streams while leaving the one remaining
+            # progressive format (itag 18, 360p) untouched — same root
+            # cause and fallback as download_youtube_tool.py's _download().
+            # The format the user picked from the quality buttons is no
+            # longer obtainable once it's 403'd, so retry with "best"
+            # instead of the same format_id.
+            opts = {
+                **_base_opts(),
+                "format": "best",
+                "extractor_args": {"youtube": {"player_client": ["android"]}},
+            }
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                return ydl.prepare_filename(info)
+                return ydl.prepare_filename(info), info.get("id") or temp_basename.lstrip("."), True
 
         try:
-            file_path = await asyncio.to_thread(_run)
+            temp_path_str, video_id, degraded_quality = await asyncio.to_thread(_run)
         except Exception as exc:
             raise MediaDownloadError(str(exc)) from exc
 
-        size_bytes = Path(file_path).stat().st_size
+        temp_path = Path(temp_path_str)
+        final_path = self._storage_dir / f"{video_id}{temp_path.suffix}"
+        temp_path.replace(final_path)
+
+        size_bytes = final_path.stat().st_size
 
         async with async_session_maker() as session:
-            media = ShowroomMedia(title=title, file_path=file_path, file_size_bytes=size_bytes)
+            media = ShowroomMedia(title=title, file_path=str(final_path), file_size_bytes=size_bytes)
             session.add(media)
             await session.commit()
             await session.refresh(media)
-        return media
+        return DownloadOutcome(media=media, degraded_quality=degraded_quality)

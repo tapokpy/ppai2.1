@@ -13,6 +13,7 @@ RUN apt-get update \
         libgomp1 \
         ffmpeg \
         curl \
+        unzip \
         # ezdxf's drawing renderer (cad_parser.py::render_to_pdf/render_to_png)
         # resolves TEXT/MTEXT fonts by exact filename against a hardcoded
         # fallback list (DejaVuSans.ttf, Arial.ttf, ...) — none of which
@@ -48,6 +49,22 @@ RUN curl -fsSL -o /tmp/oda.deb \
     && rm -rf /var/lib/apt/lists/* /tmp/oda.deb \
     && printf '#!/bin/sh\nexec xvfb-run -a /usr/bin/ODAFileConverter "$@"\n' > /usr/local/bin/oda-convert.sh \
     && chmod +x /usr/local/bin/oda-convert.sh
+
+# Deno — JS runtime yt-dlp needs to solve YouTube's signature/challenge JS.
+# Confirmed live (2026-08-18): `yt-dlp -v <url> --simulate` inside this image
+# showed "[debug] JS runtimes: none" and "WARNING: No supported JavaScript
+# runtime could be found" — this is why some (higher-quality/adaptive)
+# YouTube formats were getting HTTP 403 while others worked fine. Deno
+# specifically because yt-dlp's own warning names it as the runtime it
+# recommends/enables by default. No yt-dlp option changes needed elsewhere —
+# it autodetects a runtime on PATH by itself. Version pinned (like the ODA
+# File Converter above); bump deliberately, not via "latest". The official
+# install script needs unzip (added to the apt-get block above) to extract
+# the release archive.
+ENV DENO_INSTALL=/opt/deno
+ENV PATH="${DENO_INSTALL}/bin:${PATH}"
+RUN curl -fsSL https://deno.land/install.sh | sh -s -- v2.9.5 \
+    && deno --version
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

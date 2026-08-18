@@ -12,7 +12,7 @@ from app.bot.handlers.media import (
     handle_format_choice,
     handle_media_link,
 )
-from app.services.media_downloader import FormatOption, MediaDownloadError, ProbeResult
+from app.services.media_downloader import DownloadOutcome, FormatOption, MediaDownloadError, ProbeResult
 
 
 @pytest.fixture(autouse=True)
@@ -120,7 +120,9 @@ async def test_handle_format_choice_starts_background_download():
     bot = AsyncMock()
     media_downloader = AsyncMock()
     media_downloader.ensure_quota = AsyncMock()
-    media_downloader.download = AsyncMock()
+    media_downloader.download = AsyncMock(
+        return_value=DownloadOutcome(media=MagicMock(id=1, title="Видео"), degraded_quality=False)
+    )
     cascade_router = MagicMock()
 
     await handle_format_choice(callback, bot, media_downloader, cascade_router)
@@ -130,3 +132,36 @@ async def test_handle_format_choice_starts_background_download():
     callback_message.edit_text.assert_awaited_once()
     assert token not in _pending
     media_downloader.download.assert_awaited_once()
+    final_text = bot.edit_message_text.call_args_list[-1].args[0]
+    assert "360p" not in final_text
+
+
+@pytest.mark.asyncio
+async def test_handle_format_choice_reports_quality_downgrade():
+    from app.bot.handlers.media import _PendingDownload
+
+    token = "abc12345"
+    _pending[token] = _PendingDownload(
+        url="https://example.com/watch?v=x",
+        title="Видео",
+        formats={"137": FormatOption(format_id="137", description="1080p", filesize_bytes=1000)},
+    )
+
+    callback_message = MagicMock()
+    callback_message.chat.id = 1
+    callback_message.message_id = 2
+    callback_message.edit_text = AsyncMock()
+    callback = SimpleNamespace(data=f"media_dl:{token}:137", answer=AsyncMock(), message=callback_message)
+    bot = AsyncMock()
+    media_downloader = AsyncMock()
+    media_downloader.ensure_quota = AsyncMock()
+    media_downloader.download = AsyncMock(
+        return_value=DownloadOutcome(media=MagicMock(id=1, title="Видео"), degraded_quality=True)
+    )
+    cascade_router = MagicMock()
+
+    await handle_format_choice(callback, bot, media_downloader, cascade_router)
+    await asyncio.sleep(0.05)  # let the spawned background task run
+
+    final_text = bot.edit_message_text.call_args_list[-1].args[0]
+    assert "360p" in final_text

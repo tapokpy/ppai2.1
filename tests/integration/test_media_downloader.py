@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yt_dlp
 from sqlalchemy import select
 
 from app.core.database import async_session_maker
@@ -170,10 +171,11 @@ async def test_download_saves_file_and_db_row(clean_db, tmp_path):
     mock_ydl.__enter__.return_value.prepare_filename.return_value = str(expected_path)
 
     with patch("app.services.media_downloader.yt_dlp.YoutubeDL", return_value=mock_ydl):
-        media = await downloader.download("https://example.com/watch?v=video123", "137", "Тестовое видео")
+        outcome = await downloader.download("https://example.com/watch?v=video123", "137", "Тестовое видео")
 
-    assert media.title == "Тестовое видео"
-    assert media.file_size_bytes == len(b"fake video content")
+    assert outcome.media.title == "Тестовое видео"
+    assert outcome.media.file_size_bytes == len(b"fake video content")
+    assert outcome.degraded_quality is False
 
     async with async_session_maker() as session:
         stored = (await session.execute(select(ShowroomMedia))).scalars().all()
@@ -210,3 +212,87 @@ async def test_download_raises_media_download_error_on_failure(clean_db, tmp_pat
     with patch("app.services.media_downloader.yt_dlp.YoutubeDL", return_value=mock_ydl):
         with pytest.raises(MediaDownloadError):
             await downloader.download("https://example.com/watch?v=x", "137", "title")
+
+
+@pytest.mark.asyncio
+async def test_download_falls_back_to_android_360p_on_403(clean_db, tmp_path):
+    downloader = MediaDownloader(storage_dir=str(tmp_path), quota_gb=100)
+    fallback_output = tmp_path / "video123.mp4"
+
+    failing_ydl = MagicMock()
+    failing_ydl.__enter__.return_value.extract_info.side_effect = yt_dlp.utils.DownloadError(
+        "ERROR: unable to download video data: HTTP Error 403: Forbidden"
+    )
+
+    def _fake_fallback_extract_info(url, download):
+        fallback_output.write_bytes(b"fake 360p video")
+        return {"id": "video123", "ext": "mp4"}
+
+    succeeding_ydl = MagicMock()
+    succeeding_ydl.__enter__.return_value.extract_info.side_effect = _fake_fallback_extract_info
+    succeeding_ydl.__enter__.return_value.prepare_filename.return_value = str(fallback_output)
+
+    with patch(
+        "app.services.media_downloader.yt_dlp.YoutubeDL",
+        side_effect=[failing_ydl, succeeding_ydl],
+    ) as ydl_ctor:
+        outcome = await downloader.download("https://example.com/watch?v=video123", "137", "Тестовое видео")
+
+    assert outcome.degraded_quality is True
+    assert outcome.media.title == "Тестовое видео"
+    assert ydl_ctor.call_count == 2
+    fallback_opts = ydl_ctor.call_args_list[1].args[0]
+    assert fallback_opts["format"] == "best"
+    assert fallback_opts["extractor_args"] == {"youtube": {"player_client": ["android"]}}
+
+
+@pytest.mark.asyncio
+async def test_download_cleans_up_orphaned_partial_before_fallback(clean_db, tmp_path):
+    fixed_uuid = MagicMock(hex="deadbeef")
+    leftover = tmp_path / ".tmp_deadbeef.f137.mp4.part"
+    leftover.write_bytes(b"orphaned partial video track")
+
+    downloader = MediaDownloader(storage_dir=str(tmp_path), quota_gb=100)
+    fallback_output = tmp_path / "video123.mp4"
+
+    failing_ydl = MagicMock()
+    failing_ydl.__enter__.return_value.extract_info.side_effect = yt_dlp.utils.DownloadError(
+        "ERROR: unable to download video data: HTTP Error 403: Forbidden"
+    )
+
+    def _fake_fallback_extract_info(url, download):
+        fallback_output.write_bytes(b"fake 360p video")
+        return {"id": "video123", "ext": "mp4"}
+
+    succeeding_ydl = MagicMock()
+    succeeding_ydl.__enter__.return_value.extract_info.side_effect = _fake_fallback_extract_info
+    succeeding_ydl.__enter__.return_value.prepare_filename.return_value = str(fallback_output)
+
+    with (
+        patch("app.services.media_downloader.uuid4", return_value=fixed_uuid),
+        patch(
+            "app.services.media_downloader.yt_dlp.YoutubeDL",
+            side_effect=[failing_ydl, succeeding_ydl],
+        ),
+    ):
+        outcome = await downloader.download("https://example.com/watch?v=video123", "137", "title")
+
+    assert outcome.degraded_quality is True
+    assert not leftover.exists()
+
+
+@pytest.mark.asyncio
+async def test_download_does_not_fall_back_on_non_403_download_error(clean_db, tmp_path):
+    downloader = MediaDownloader(storage_dir=str(tmp_path), quota_gb=100)
+    failing_ydl = MagicMock()
+    failing_ydl.__enter__.return_value.extract_info.side_effect = yt_dlp.utils.DownloadError(
+        "ERROR: [youtube] video123: Video unavailable"
+    )
+
+    with patch(
+        "app.services.media_downloader.yt_dlp.YoutubeDL", return_value=failing_ydl
+    ) as ydl_ctor:
+        with pytest.raises(MediaDownloadError, match="Video unavailable"):
+            await downloader.download("https://example.com/watch?v=video123", "137", "title")
+
+    assert ydl_ctor.call_count == 1
