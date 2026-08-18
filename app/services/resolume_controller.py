@@ -26,6 +26,12 @@ class ScreenTarget:
     layer: int
 
 
+@dataclass
+class ColumnInfo:
+    column: int
+    name: str
+
+
 class ScreensMap:
     """Loads the friendly-name -> Resolume layer mapping from
     screens_map.yaml. A screen's layer is fixed (which physical output a
@@ -115,3 +121,36 @@ class ResolumeController:
                 return response.status_code == 200
         except httpx.HTTPError:
             return False
+
+    async def list_occupied_columns(self) -> list[ColumnInfo]:
+        """Fetches the live composition over REST and returns every column
+        that has a real clip loaded in at least one layer (state != Empty),
+        in column order — lets the showroom handler show real, tappable
+        buttons instead of asking the user to guess a column number blind.
+        A column can have a named clip in one layer and nothing in the
+        others (e.g. only the "text" layer is named in the observed live
+        composition) — the first non-empty name found for that column
+        wins; falls back to "Ролик N" if the clip exists but was never
+        named in Resolume."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(f"{self._rest_base_url}/composition")
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPError as exc:
+            raise ResolumeUnavailableError(str(exc)) from exc
+
+        names_by_column: dict[int, str] = {}
+        for layer in data.get("layers", []):
+            for i, clip in enumerate(layer.get("clips", []), start=1):
+                state = (clip.get("connected") or {}).get("value")
+                if not state or state == "Empty":
+                    continue
+                name = (clip.get("name") or {}).get("value") or ""
+                if i not in names_by_column or (not names_by_column[i] and name):
+                    names_by_column[i] = name
+
+        return [
+            ColumnInfo(column=column, name=names_by_column[column] or f"Ролик {column}")
+            for column in sorted(names_by_column)
+        ]

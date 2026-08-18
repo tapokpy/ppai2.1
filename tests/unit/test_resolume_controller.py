@@ -4,11 +4,29 @@ import httpx
 import pytest
 
 from app.services.resolume_controller import (
+    ColumnInfo,
     ResolumeController,
     ResolumeUnavailableError,
     ScreenNotFoundError,
     ScreensMap,
 )
+
+
+def _composition_response(layers: list[list[tuple[str, str]]]) -> dict:
+    """Builds a fake /composition REST payload. Each layer is a list of
+    (name, connected_state) pairs, one per clip/column, matching the real
+    Resolume REST shape closely enough for list_occupied_columns()."""
+    return {
+        "layers": [
+            {
+                "clips": [
+                    {"name": {"value": name}, "connected": {"value": state}}
+                    for name, state in layer
+                ]
+            }
+            for layer in layers
+        ]
+    }
 
 
 def test_screens_map_load_missing_file_returns_empty(tmp_path):
@@ -143,3 +161,90 @@ async def test_is_reachable_false_on_connection_error():
 
     with patch("app.services.resolume_controller.httpx.AsyncClient", return_value=mock_client):
         assert await controller.is_reachable() is False
+
+
+def _mock_response_for(payload: dict) -> MagicMock:
+    response = MagicMock()
+    response.json.return_value = payload
+    response.raise_for_status = MagicMock()
+    return response
+
+
+@pytest.mark.asyncio
+async def test_list_occupied_columns_skips_empty_and_uses_column_order():
+    payload = _composition_response(
+        [[("", "Empty"), ("ттт", "Disconnected"), ("аватар", "Connected"), ("", "Empty")]]
+    )
+    controller = ResolumeController(osc_host="x", osc_port=7000, rest_base_url="http://resolume/api/v1")
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=_mock_response_for(payload))
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("app.services.resolume_controller.httpx.AsyncClient", return_value=mock_client):
+        columns = await controller.list_occupied_columns()
+
+    assert columns == [ColumnInfo(column=2, name="ттт"), ColumnInfo(column=3, name="аватар")]
+
+
+@pytest.mark.asyncio
+async def test_list_occupied_columns_takes_name_from_any_layer():
+    payload = _composition_response(
+        [
+            [("", "Empty"), ("", "Empty")],
+            [("", "Empty"), ("аватар", "Connected")],
+        ]
+    )
+    controller = ResolumeController(osc_host="x", osc_port=7000, rest_base_url="http://resolume/api/v1")
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=_mock_response_for(payload))
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("app.services.resolume_controller.httpx.AsyncClient", return_value=mock_client):
+        columns = await controller.list_occupied_columns()
+
+    assert columns == [ColumnInfo(column=2, name="аватар")]
+
+
+@pytest.mark.asyncio
+async def test_list_occupied_columns_falls_back_to_default_name_when_unnamed():
+    payload = _composition_response([[("", "Connected")]])
+    controller = ResolumeController(osc_host="x", osc_port=7000, rest_base_url="http://resolume/api/v1")
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=_mock_response_for(payload))
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("app.services.resolume_controller.httpx.AsyncClient", return_value=mock_client):
+        columns = await controller.list_occupied_columns()
+
+    assert columns == [ColumnInfo(column=1, name="Ролик 1")]
+
+
+@pytest.mark.asyncio
+async def test_list_occupied_columns_returns_empty_when_nothing_loaded():
+    payload = _composition_response([[("", "Empty"), ("", "Empty")]])
+    controller = ResolumeController(osc_host="x", osc_port=7000, rest_base_url="http://resolume/api/v1")
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=_mock_response_for(payload))
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("app.services.resolume_controller.httpx.AsyncClient", return_value=mock_client):
+        columns = await controller.list_occupied_columns()
+
+    assert columns == []
+
+
+@pytest.mark.asyncio
+async def test_list_occupied_columns_wraps_network_errors():
+    controller = ResolumeController(osc_host="x", osc_port=7000, rest_base_url="http://resolume/api/v1")
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("app.services.resolume_controller.httpx.AsyncClient", return_value=mock_client):
+        with pytest.raises(ResolumeUnavailableError):
+            await controller.list_occupied_columns()

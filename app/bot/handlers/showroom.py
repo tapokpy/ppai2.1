@@ -1,12 +1,18 @@
-from aiogram import Router
-from aiogram.types import Message
+from aiogram import F, Router
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from loguru import logger
 
 from app.bot.filters import SHOWROOM_TRIGGER_PATTERN, ShouldRespondFilter, ShowroomTriggerFilter
 from app.bot.handlers.admin import ACCESS_DENIED_MESSAGE, is_admin
 from app.core.showroom_parser import ClipCommand, PresetCommand, parse_showroom_command
 from app.services.local_llm import LocalLLMClient
-from app.services.resolume_controller import ResolumeController, ResolumeUnavailableError, ScreenNotFoundError, ScreensMap
+from app.services.resolume_controller import (
+    ColumnInfo,
+    ResolumeController,
+    ResolumeUnavailableError,
+    ScreenNotFoundError,
+    ScreensMap,
+)
 
 router = Router(name="showroom")
 
@@ -16,6 +22,8 @@ NO_SCREENS_CONFIGURED_REPLY = "Экраны шоурума ещё не наст�
 UNKNOWN_COMMAND_REPLY = "Не понял команду для шоурума. Укажите экран и номер ролика, или название пресета."
 RESOLUME_UNAVAILABLE_REPLY = "Resolume сейчас не отвечает: {error}"
 ASK_COLUMN_REPLY = "На какой ролик (номер колонки в Resolume) переключить?"
+NO_OCCUPIED_COLUMNS_REPLY = "В Resolume сейчас нет ни одного занятого ролика."
+PICK_COLUMN_REPLY = "На какой ролик переключить?"
 
 
 def _clarify_screen_reply(screen_names: list[str]) -> str:
@@ -24,6 +32,14 @@ def _clarify_screen_reply(screen_names: list[str]) -> str:
 
 def _preset_not_found_reply(name: str, preset_names: list[str]) -> str:
     return f"Пресет «{name}» не найден. Доступные: {', '.join(preset_names) or 'нет'}"
+
+
+def _columns_keyboard(screen_name: str, columns: list[ColumnInfo]) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text=f"{c.column}. {c.name}", callback_data=f"showroom_col:{screen_name}:{c.column}")]
+        for c in columns
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 @router.message(ShowroomTriggerFilter(), ShouldRespondFilter())
@@ -106,7 +122,21 @@ async def _run_clip(
         return
 
     if command.column is None:
-        await message.answer(ASK_COLUMN_REPLY)
+        # Show real, tappable buttons for whatever's actually loaded in
+        # Resolume right now instead of asking the user to guess a column
+        # number blind — falls back to the old plain-text prompt only if
+        # Resolume can't be reached at all to list them.
+        try:
+            columns = await resolume_controller.list_occupied_columns()
+        except ResolumeUnavailableError:
+            await message.answer(ASK_COLUMN_REPLY)
+            return
+
+        if not columns:
+            await message.answer(NO_OCCUPIED_COLUMNS_REPLY)
+            return
+
+        await message.answer(PICK_COLUMN_REPLY, reply_markup=_columns_keyboard(screen_name, columns))
         return
 
     try:
@@ -122,3 +152,26 @@ async def _run_clip(
         return
 
     await message.answer(f"Переключил «{screen_name}» на ролик {command.column}.")
+
+
+@router.callback_query(F.data.startswith("showroom_col:"))
+async def handle_showroom_column_choice(
+    callback: CallbackQuery, resolume_controller: ResolumeController
+) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer(ACCESS_DENIED_MESSAGE, show_alert=True)
+        return
+
+    _prefix, screen_name, column_str = callback.data.split(":", 2)
+    column = int(column_str)
+
+    try:
+        resolume_controller.trigger_column(column)
+    except ResolumeUnavailableError as exc:
+        logger.warning(f"Resolume unavailable: {exc}")
+        await callback.answer(RESOLUME_UNAVAILABLE_REPLY.format(error=str(exc)), show_alert=True)
+        return
+
+    if callback.message is not None:
+        await callback.message.edit_text(f"Переключил «{screen_name}» на ролик {column}.")
+    await callback.answer()
