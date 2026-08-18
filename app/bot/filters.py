@@ -4,12 +4,20 @@ from aiogram import Bot
 from aiogram.filters import BaseFilter
 from aiogram.types import Message
 
-# Matches a todo/plan keyword immediately suffixed with the digit "3"
-# (e.g. "тодолист3", "план3", "запиши в план3", "список задач3",
+# Matches a todo/plan keyword suffixed with the digit "3" (e.g.
+# "тодолист3", "план3", "запиши в план3", "список задач3",
 # "бэклог3"/"backlog3") — a deterministic, cheap trigger for the todo-
 # capture handler that's very unlikely to fire on ordinary conversation.
+# "3" stays required here (unlike the showroom trigger below) because
+# "план"/"задача"/"таск" are common words in ordinary conversation —
+# dropping the digit would false-trigger constantly. \s* before the 3
+# (not a bare 3\b) is still needed though: a voice message transcribed
+# by Whisper always inserts a space between a spoken word and a spoken
+# digit ("план 3"), so the digit can never be glued onto the word the
+# way someone types it — observed live with the showroom trigger, which
+# had the exact same bug (see SHOWROOM_TRIGGER_PATTERN's history).
 TODO_TRIGGER_PATTERN = re.compile(
-    r"\b(?:тодо\s*лист|тудулист|to-?do|бэклог|backlog|план|задач|таск|task)3\b",
+    r"\b(?:тодо\s*лист|тудулист|to-?do|бэклог|backlog|план|задач|таск|task)\s*3\b",
     re.IGNORECASE,
 )
 
@@ -19,7 +27,17 @@ class TodoTriggerFilter(BaseFilter):
         return bool(message.text) and bool(TODO_TRIGGER_PATTERN.search(message.text))
 
 
-SHOWROOM_TRIGGER_PATTERN = re.compile(r"\b(?:шоурум|showroom)3\b", re.IGNORECASE)
+# "3" is optional here (unlike the other X3 triggers in this file) —
+# "шоурум"/"showroom" alone is specific enough to this domain that it's
+# very unlikely to false-trigger on ordinary conversation, and requiring
+# the digit made this trigger effectively impossible to say out loud:
+# Whisper transcribes spoken "шоурум три" as "шоурум 3" (a space, never
+# glued), so the strict \bшоурум3\b never matched a real voice message.
+# "шурум" (dropped unstressed "о") is included too — confirmed live,
+# Whisper actually transcribed a real voice message as "Шурум 3,
+# переключи ролик 6", which fell through to plain chat instead of the
+# showroom handler until both this and the space issue were fixed.
+SHOWROOM_TRIGGER_PATTERN = re.compile(r"\b(?:шоурум|шурум|showroom)(?:\s*3)?\b", re.IGNORECASE)
 
 
 class ShowroomTriggerFilter(BaseFilter):
@@ -27,7 +45,9 @@ class ShowroomTriggerFilter(BaseFilter):
         return bool(message.text) and bool(SHOWROOM_TRIGGER_PATTERN.search(message.text))
 
 
-CAD_TRIGGER_PATTERN = re.compile(r"\b(?:чертеж|чертёж|cad)3\b", re.IGNORECASE)
+# \s*3, not bare 3\b — see TODO_TRIGGER_PATTERN's comment on why (voice
+# transcription always inserts a space before the digit).
+CAD_TRIGGER_PATTERN = re.compile(r"\b(?:чертеж|чертёж|cad)\s*3\b", re.IGNORECASE)
 
 
 class CadTriggerFilter(BaseFilter):
@@ -38,7 +58,9 @@ class CadTriggerFilter(BaseFilter):
 # "склад3" — read-only stock lookup ("путеводитель": "склад3 где модуль X"),
 # open to any approved user. Adding stock ("остаток3") is a separate,
 # admin-only trigger so the read path doesn't need an is_admin check at all.
-WAREHOUSE_TRIGGER_PATTERN = re.compile(r"\b(?:склад|warehouse)3\b", re.IGNORECASE)
+# \s*3, not bare 3\b — see TODO_TRIGGER_PATTERN's comment on why (voice
+# transcription always inserts a space before the digit).
+WAREHOUSE_TRIGGER_PATTERN = re.compile(r"\b(?:склад|warehouse)\s*3\b", re.IGNORECASE)
 
 
 class WarehouseTriggerFilter(BaseFilter):
@@ -46,7 +68,9 @@ class WarehouseTriggerFilter(BaseFilter):
         return bool(message.text) and bool(WAREHOUSE_TRIGGER_PATTERN.search(message.text))
 
 
-STOCK_ADD_TRIGGER_PATTERN = re.compile(r"\b(?:остаток|stock)3\b", re.IGNORECASE)
+# \s*3, not bare 3\b — see TODO_TRIGGER_PATTERN's comment on why (voice
+# transcription always inserts a space before the digit).
+STOCK_ADD_TRIGGER_PATTERN = re.compile(r"\b(?:остаток|stock)\s*3\b", re.IGNORECASE)
 
 
 class StockAddTriggerFilter(BaseFilter):

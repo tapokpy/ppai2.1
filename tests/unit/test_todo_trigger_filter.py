@@ -17,6 +17,8 @@ from app.bot.filters import TodoTriggerFilter
         "бэклог3",
         "backlog3 fix the power calculator",
         "todo3",
+        # Voice messages always get a space before a spoken digit.
+        "план 3 проверить блоки питания",
     ],
 )
 async def test_matches_trigger_examples(text):

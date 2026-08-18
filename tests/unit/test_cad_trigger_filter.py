@@ -12,6 +12,8 @@ from app.bot.filters import CadTriggerFilter
         "чертеж3",
         "чертёж3 рамка 1000х500",
         "cad3 plate 200x100",
+        # Voice messages always get a space before a spoken digit.
+        "чертеж 3 рамка 1000х500",
     ],
 )
 async def test_matches_trigger_examples(text):
